@@ -1,6 +1,9 @@
 package com.example.checker.data
 
+import android.content.Context
 import android.util.Log
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -13,13 +16,40 @@ import java.io.File
 import java.util.UUID
 
 @Suppress("UNCHECKED_CAST")
-class CheckerRepository {
+class CheckerRepository(private val context: Context? = null) {
 
     private val api = NetworkClient.apiService
+    private val gson = Gson()
+    private val sharedPrefs = context?.getSharedPreferences("checker_history", Context.MODE_PRIVATE)
     
     // In-memory cache for Search History to make UI reactive
     private val _historyList = MutableStateFlow<List<HistoryItem>>(emptyList())
     val historyList: StateFlow<List<HistoryItem>> = _historyList
+
+    init {
+        loadLocalHistory()
+    }
+
+    private fun saveLocalHistory(list: List<HistoryItem>) {
+        try {
+            sharedPrefs?.edit()?.putString("history_list", gson.toJson(list))?.apply()
+        } catch (e: Exception) {
+            Log.e("CheckerRepository", "Failed to save history: ${e.message}")
+        }
+    }
+
+    private fun loadLocalHistory() {
+        val json = sharedPrefs?.getString("history_list", null)
+        if (json != null) {
+            try {
+                val type = object : TypeToken<List<HistoryItem>>() {}.type
+                val list = gson.fromJson<List<HistoryItem>>(json, type) ?: emptyList()
+                _historyList.value = list
+            } catch (e: Exception) {
+                Log.e("CheckerRepository", "Failed to load history: ${e.message}")
+            }
+        }
+    }
 
     suspend fun checkHoax(text: String?, imageUrl: String?, engine: String): Result<HoaxResponse> {
         return try {
@@ -29,11 +59,6 @@ class CheckerRepository {
             val historyTitle = text?.take(40) ?: "Pemindaian Gambar OCR"
             addLocalHistory("hoax", historyTitle, response.trustScore, response.status, response)
             
-            // Sync to backend BFF asynchronously (non-blocking)
-            CoroutineScope(Dispatchers.IO).launch {
-                syncHistoryToBackend("hoax", historyTitle, response.trustScore, response.status, response)
-            }
-            
             Result.success(response)
         } catch (e: Exception) {
             Log.e("CheckerRepository", "BFF Error: ${e.message}")
@@ -41,16 +66,11 @@ class CheckerRepository {
         }
     }
 
-    suspend fun scanUrl(url: String): Result<ScamResponse> {
+    suspend fun scanUrl(url: String, enableWebScraping: Boolean = false): Result<ScamResponse> {
         return try {
-            val response = api.scanUrl(ScamUrlRequest(url))
+            val response = api.scanUrl(ScamUrlRequest(url, enableWebScraping))
             
             addLocalHistory("scam", url, response.dangerScore, response.threatLevel, response)
-            
-            // Sync to backend BFF asynchronously (non-blocking)
-            CoroutineScope(Dispatchers.IO).launch {
-                syncHistoryToBackend("scam", url, response.dangerScore, response.threatLevel, response)
-            }
             
             Result.success(response)
         } catch (e: Exception) {
@@ -71,11 +91,6 @@ class CheckerRepository {
             
             addLocalHistory("scam", file.name, response.dangerScore, response.threatLevel, response)
             
-            // Sync to backend BFF asynchronously (non-blocking)
-            CoroutineScope(Dispatchers.IO).launch {
-                syncHistoryToBackend("scam", file.name, response.dangerScore, response.threatLevel, response)
-            }
-            
             Result.success(response)
         } catch (e: Exception) {
             Log.e("CheckerRepository", "BFF File Scan Error: ${e.message}")
@@ -83,34 +98,19 @@ class CheckerRepository {
         }
     }
 
-    private suspend fun syncHistoryToBackend(type: String, title: String, score: Int, status: String, details: Any) {
-        try {
-            api.addHistory(AddHistoryRequest(type, title, score, status, details))
-        } catch (e: Exception) {
-            Log.e("CheckerRepository", "Failed to sync history to backend: ${e.message}")
-        }
-    }
-
     suspend fun fetchHistory(): Result<List<HistoryItem>> {
-        return try {
-            val history = api.getHistory()
-            _historyList.value = history
-            Result.success(history)
-        } catch (e: Exception) {
-            Log.e("CheckerRepository", "BFF History fetch failed. Serving Local Cache.")
-            Result.success(_historyList.value)
-        }
+        loadLocalHistory()
+        return Result.success(_historyList.value)
     }
 
     suspend fun clearHistory(): Result<Boolean> {
         return try {
-            api.clearHistory()
+            sharedPrefs?.edit()?.clear()?.apply()
             _historyList.value = emptyList()
             Result.success(true)
         } catch (e: Exception) {
-            Log.e("CheckerRepository", "BFF History clear failed. Purging Local Cache.")
-            _historyList.value = emptyList()
-            Result.success(true)
+            Log.e("CheckerRepository", "Failed to clear local history: ${e.message}")
+            Result.success(false)
         }
     }
 
@@ -127,6 +127,7 @@ class CheckerRepository {
         val currentList = _historyList.value.toMutableList()
         currentList.add(0, newItem)
         if (currentList.size > 50) currentList.removeLast()
+        saveLocalHistory(currentList)
         _historyList.value = currentList
     }
 }

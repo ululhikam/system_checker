@@ -25,22 +25,11 @@ interface CheckerApiService {
         @Part("fileName") fileName: okhttp3.RequestBody,
         @Part("fileSize") fileSize: okhttp3.RequestBody
     ): ScamResponse
-
-    @GET("history")
-    suspend fun getHistory(): List<HistoryItem>
-
-    @POST("history")
-    suspend fun addHistory(
-        @Body request: AddHistoryRequest
-    ): HistoryItem
-
-    @POST("history/clear")
-    suspend fun clearHistory(): Map<String, Boolean>
 }
 
 object NetworkClient {
     // Point to host machine IP address on the Wi-Fi network so physical devices can connect
-    private const val BASE_URL = "http://192.168.1.10:3000/api/"
+    private const val BASE_URL = "https://checker-ruddy-seven.vercel.app/api/"
 
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)

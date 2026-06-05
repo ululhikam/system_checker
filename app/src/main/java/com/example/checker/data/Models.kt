@@ -41,7 +41,8 @@ data class HoaxResponse(
 
 // Scam Scanner Contracts
 data class ScamUrlRequest(
-    @SerializedName("url") val url: String
+    @SerializedName("url") val url: String,
+    @SerializedName("enableWebScraping") val enableWebScraping: Boolean = false
 )
 
 data class DetectionItem(
@@ -75,13 +76,5 @@ data class HistoryItem(
     @SerializedName("status") val status: String, // "safe", "warning", "dangerous", "neutral"
     @SerializedName("timestamp") val timestamp: String,
     @SerializedName("resultDetails") val resultDetails: Any? // Can be cast or mapped based on type
-)
-
-data class AddHistoryRequest(
-    @SerializedName("type") val type: String,
-    @SerializedName("title") val title: String,
-    @SerializedName("score") val score: Int,
-    @SerializedName("status") val status: String,
-    @SerializedName("resultDetails") val resultDetails: Any?
 )
 

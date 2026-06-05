@@ -4,8 +4,6 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -43,6 +41,22 @@ import com.example.checker.ui.theme.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
+
+/**
+ * Custom Layout modifier to scale content and its bounds.
+ */
+fun Modifier.scaleLayout(scale: Float): Modifier = layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints)
+    layout(
+        (placeable.width * scale).toInt(),
+        (placeable.height * scale).toInt()
+    ) {
+        placeable.placeRelativeWithLayer(0, 0) {
+            this.scaleX = scale
+            this.scaleY = scale
+        }
+    }
+}
 
 /**
  * Screen wrapper for premium styling.
@@ -97,11 +111,6 @@ fun DashboardScreen(
     val historyList by repository.historyList.collectAsState()
     
     var isShieldActive by remember { mutableStateOf(ClipboardMonitorService.isServiceRunning) }
-    var activeHistoryDetail by remember { mutableStateOf<HistoryItem?>(null) }
-
-    LaunchedEffect(Unit) {
-        repository.fetchHistory()
-    }
 
     val safeItemsCount = historyList.count { it.status == "safe" }
     val warningItemsCount = historyList.count { it.status == "warning" || it.status == "neutral" }
@@ -197,7 +206,7 @@ fun DashboardScreen(
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
-                                imageVector = if (isShieldActive) Icons.Default.Shield else Icons.Default.ShieldMoon,
+                                imageVector = if (isShieldActive) Icons.Default.Shield else Icons.Default.Security,
                                 contentDescription = "Shield",
                                 tint = if (isShieldActive) NeonGreen else NeonRed,
                                 modifier = Modifier.size(20.dp)
@@ -229,7 +238,7 @@ fun DashboardScreen(
                                 uncheckedThumbColor = TextSteel,
                                 uncheckedTrackColor = ObsidianBg
                             ),
-                            modifier = Modifier.scale(0.8f)
+                            modifier = Modifier.scaleLayout(0.8f)
                         )
                     }
                 }
@@ -400,42 +409,12 @@ fun DashboardScreen(
             } else {
                 historyList.take(3).forEach { item ->
                     HistoryRowItem(item = item, onClick = {
-                        activeHistoryDetail = item
+                        navController.navigate("history")
                     })
                     Spacer(modifier = Modifier.height(8.dp))
                 }
             }
             Spacer(modifier = Modifier.height(80.dp))
-        }
-    }
-
-    if (activeHistoryDetail != null) {
-        var dialogTitle by remember { mutableStateOf("") }
-        var dialogType by remember { mutableStateOf("") }
-        var dialogScore by remember { mutableStateOf(0) }
-        var dialogVerdict by remember { mutableStateOf("") }
-        var dialogAdvice by remember { mutableStateOf("") }
-        var dialogStatus by remember { mutableStateOf("") }
-
-        showHistoryDetailDialog(activeHistoryDetail!!) { title, type, score, verdict, advice, status ->
-            dialogTitle = title
-            dialogType = type
-            dialogScore = score
-            dialogVerdict = verdict
-            dialogAdvice = advice
-            dialogStatus = status
-        }
-
-        if (dialogTitle.isNotEmpty()) {
-            ShareCardDialog(
-                title = dialogTitle.take(30),
-                type = dialogType,
-                score = dialogScore,
-                verdict = dialogVerdict,
-                advice = dialogAdvice,
-                status = dialogStatus,
-                onDismiss = { activeHistoryDetail = null }
-            )
         }
     }
 }
@@ -458,36 +437,6 @@ fun HoaxScreen(
     var scanLogs = remember { mutableStateListOf<String>() }
     var activeResult by remember { mutableStateOf<HoaxResponse?>(null) }
     var showShareDialog by remember { mutableStateOf<HoaxResponse?>(null) }
-
-    val photoPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            selectedImageUri = uri.toString()
-            Toast.makeText(context, "Mengekstrak teks dari gambar...", Toast.LENGTH_SHORT).show()
-            try {
-                val recognizer = com.google.mlkit.vision.text.TextRecognition.getClient(
-                    com.google.mlkit.vision.text.latin.TextRecognizerOptions.DEFAULT_OPTIONS
-                )
-                val image = com.google.mlkit.vision.common.InputImage.fromFilePath(context, uri)
-                recognizer.process(image)
-                    .addOnSuccessListener { visionText ->
-                        val extractedText = visionText.text
-                        if (extractedText.isNotEmpty()) {
-                            queryText = extractedText
-                            Toast.makeText(context, "Teks berhasil diekstrak!", Toast.LENGTH_SHORT).show()
-                        } else {
-                            Toast.makeText(context, "Gambar terbaca, tapi tidak ditemukan teks di dalamnya.", Toast.LENGTH_LONG).show()
-                        }
-                    }
-                    .addOnFailureListener { e ->
-                        Toast.makeText(context, "Gagal memproses gambar: ${e.message}", Toast.LENGTH_LONG).show()
-                    }
-            } catch (e: Exception) {
-                Toast.makeText(context, "Error OCR: ${e.message}", Toast.LENGTH_LONG).show()
-            }
-        }
-    }
 
     val ocrLogPool = listOf(
         "Mengekstrak file gambar...",
@@ -565,7 +514,14 @@ fun HoaxScreen(
                             .background(CardCarbon)
                             .border(1.dp, CardBorder, RoundedCornerShape(10.dp))
                             .clickable {
-                                photoPickerLauncher.launch("image/*")
+                                // Simulate cropping/uploading image snapshot containing hoax text
+                                selectedImageUri = "content://media/external/images/media/hoax_screenshot.jpg"
+                                queryText = "SELAMAT! Nomor Whatsapp Anda terpilih memenangkan hadiah Rp 150.000.000 dari program undian Shopee 2026. Klik link bit.ly/shopee-hadiah-2026 untuk mengklaim!"
+                                Toast.makeText(
+                                    context,
+                                    "Screenshot Berhasil Dimuat (Mode Simulasi OCR)!", 
+                                    Toast.LENGTH_SHORT
+                                ).show()
                             }
                             .padding(vertical = 12.dp, horizontal = 8.dp),
                         contentAlignment = Alignment.Center
@@ -811,46 +767,6 @@ fun HoaxScreen(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Corrected Fact (Fakta Sebenarnya) Card
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(NeonGreen.copy(alpha = 0.05f))
-                        .border(1.dp, NeonGreen.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
-                        .padding(16.dp)
-                ) {
-                    Column {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                tint = NeonGreen,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "FAKTA SEBENARNYA",
-                                color = NeonGreen,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = FontFamily.Monospace,
-                                letterSpacing = 1.sp
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = result.correctedFact,
-                            color = TextWhite,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            lineHeight = 18.sp
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
                 // Breakdown explanation card
                 Box(
                     modifier = Modifier
@@ -960,19 +876,18 @@ fun HoaxScreen(
                     }
                 }
 
-                // Google Fact Check Matches Section
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    text = "VERIFIKASI FAKTA GLOBAL",
-                    color = TextSteel,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-
+                // Google Fact Check Matches Section (if available)
                 if (result.googleFactChecks.isNotEmpty()) {
-                    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "VERIFIKASI FAKTA GLOBAL",
+                        color = TextSteel,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+
                     result.googleFactChecks.forEach { check ->
                         Box(
                             modifier = Modifier
@@ -980,15 +895,6 @@ fun HoaxScreen(
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(CardCarbon)
                                 .border(1.dp, CardBorder, RoundedCornerShape(10.dp))
-                                .clickable {
-                                    if (check.url.isNotEmpty()) {
-                                        try {
-                                            uriHandler.openUri(check.url)
-                                        } catch (e: Exception) {
-                                            Toast.makeText(context, "Gagal membuka link: ${e.message}", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                }
                                 .padding(12.dp)
                         ) {
                             Column {
@@ -1017,41 +923,6 @@ fun HoaxScreen(
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(text = "Oleh: ${check.claimant}", color = TextSteel, fontSize = 11.sp)
                             }
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-                    }
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(CardCarbon)
-                            .border(1.dp, CardBorder, RoundedCornerShape(10.dp))
-                            .padding(14.dp)
-                    ) {
-                        Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = Icons.Default.Info,
-                                    contentDescription = null,
-                                    tint = NeonBlue,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "Google Fact Check Database",
-                                    color = TextWhite,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = "Tidak ditemukan artikel sanggahan instan di database global Google untuk kalimat ini. Analisis kebenaran sepenuhnya dikerjakan secara komprehensif oleh Context Engine AI (Gemini/DeepSeek).",
-                                color = TextSteel,
-                                fontSize = 11.sp,
-                                lineHeight = 16.sp
-                            )
                         }
                     }
                 }
@@ -1105,7 +976,6 @@ fun HoaxScreen(
             score = showShareDialog!!.trustScore,
             verdict = showShareDialog!!.verdictSummary,
             advice = showShareDialog!!.aiInsights.recommendations,
-            status = showShareDialog!!.status,
             onDismiss = { showShareDialog = null }
         )
     }
@@ -1129,37 +999,6 @@ fun ScamScreen(
     var scanLogs = remember { mutableStateListOf<String>() }
     var activeResult by remember { mutableStateOf<ScamResponse?>(null) }
     var showShareDialog by remember { mutableStateOf<ScamResponse?>(null) }
-
-    val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            try {
-                var fileName = "file_pindai"
-                val contentResolver = context.contentResolver
-                contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                    val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                    if (nameIndex != -1 && cursor.moveToFirst()) {
-                        fileName = cursor.getString(nameIndex)
-                    }
-                }
-                
-                val inputStream = contentResolver.openInputStream(uri)
-                if (inputStream != null) {
-                    val tempFile = File(context.cacheDir, fileName)
-                    tempFile.outputStream().use { outputStream ->
-                        inputStream.copyTo(outputStream)
-                    }
-                    selectedFile = tempFile
-                    Toast.makeText(context, "File $fileName berhasil dimuat!", Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(context, "Gagal membaca file terpilih.", Toast.LENGTH_SHORT).show()
-                }
-            } catch (e: Exception) {
-                Toast.makeText(context, "Gagal memuat file: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
 
     val urlLogPool = listOf(
         "Menginisialisasi engine scanner URL...",
@@ -1314,7 +1153,13 @@ fun ScamScreen(
                                 ), RoundedCornerShape(12.dp)
                             )
                             .clickable {
-                                filePickerLauncher.launch("*/*")
+                                // Simulate picking a dangerous APK file
+                                selectedFile = File("surat_undangan_pernikahan.apk")
+                                Toast.makeText(
+                                    context,
+                                    "File APK Dipilih (Mode Simulasi)!", 
+                                    Toast.LENGTH_SHORT
+                                ).show()
                             },
                         contentAlignment = Alignment.Center
                     ) {
@@ -1332,18 +1177,8 @@ fun ScamScreen(
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold
                             )
-                            val fileSizeText = if (selectedFile != null) {
-                                val lengthInKb = selectedFile!!.length() / 1024.0
-                                if (lengthInKb > 1024.0) {
-                                    String.format("Ukuran: %.1f MB", lengthInKb / 1024.0)
-                                } else {
-                                    String.format("Ukuran: %.1f KB", lengthInKb)
-                                }
-                            } else {
-                                "Format: PDF, APK, EXE, DOCX"
-                            }
                             Text(
-                                text = fileSizeText,
+                                text = if (selectedFile != null) "Ukuran: 6.4 MB" else "Format: PDF, APK, EXE, DOCX",
                                 color = TextSteel,
                                 fontSize = 11.sp
                             )
@@ -1636,13 +1471,8 @@ fun ScamScreen(
             title = showShareDialog!!.target.take(30),
             type = "scam",
             score = showShareDialog!!.dangerScore,
-            verdict = when (showShareDialog!!.threatLevel) {
-                "dangerous" -> "🚨 TERDETEKSI BERBAHAYA (HIGH RISK)"
-                "warning" -> "⚠️ WASPADA / MENCURIGAKAN (MEDIUM RISK)"
-                else -> "✅ BERSIH / BEBAS ANCAMAN (SAFE)"
-            },
+            verdict = if (showShareDialog!!.dangerScore > 35) "BAHAYA ANCAMAN SIBER DETECTED!" else "AMAN / BERSIH",
             advice = showShareDialog!!.safetyAdvice,
-            status = showShareDialog!!.threatLevel,
             onDismiss = { showShareDialog = null }
         )
     }
@@ -1662,11 +1492,6 @@ fun HistoryScreen(
     var searchQuery by remember { mutableStateOf("") }
     val filteredList = historyList.filter {
         it.title.lowercase().contains(searchQuery.lowercase())
-    }
-    var activeHistoryDetail by remember { mutableStateOf<HistoryItem?>(null) }
-
-    LaunchedEffect(Unit) {
-        repository.fetchHistory()
     }
 
     CyberScreenWrapper(title = "Riwayat Pemindaian") {
@@ -1743,7 +1568,12 @@ fun HistoryScreen(
                 ) {
                     items(filteredList) { item ->
                         HistoryRowItem(item = item, onClick = {
-                            activeHistoryDetail = item
+                            // History detail modal dialog or notification toast
+                            Toast.makeText(
+                                context,
+                                "Membuka riwayat detail: ${item.title}", 
+                                Toast.LENGTH_SHORT
+                            ).show()
                         })
                     }
                 }
@@ -1751,113 +1581,6 @@ fun HistoryScreen(
             Spacer(modifier = Modifier.height(80.dp))
         }
     }
-
-    if (activeHistoryDetail != null) {
-        var dialogTitle by remember { mutableStateOf("") }
-        var dialogType by remember { mutableStateOf("") }
-        var dialogScore by remember { mutableStateOf(0) }
-        var dialogVerdict by remember { mutableStateOf("") }
-        var dialogAdvice by remember { mutableStateOf("") }
-        var dialogStatus by remember { mutableStateOf("") }
-
-        showHistoryDetailDialog(activeHistoryDetail!!) { title, type, score, verdict, advice, status ->
-            dialogTitle = title
-            dialogType = type
-            dialogScore = score
-            dialogVerdict = verdict
-            dialogAdvice = advice
-            dialogStatus = status
-        }
-
-        if (dialogTitle.isNotEmpty()) {
-            ShareCardDialog(
-                title = dialogTitle.take(30),
-                type = dialogType,
-                score = dialogScore,
-                verdict = dialogVerdict,
-                advice = dialogAdvice,
-                status = dialogStatus,
-                onDismiss = { activeHistoryDetail = null }
-            )
-        }
-    }
-}
-
-fun showHistoryDetailDialog(
-    item: HistoryItem,
-    onShow: (title: String, type: String, score: Int, verdict: String, advice: String, status: String) -> Unit
-) {
-    val title = item.title
-    val type = item.type
-    val score = item.score
-    val status = item.status
-    
-    // Default fallback values based on item status
-    var advice = if (type == "hoax") {
-        when (status) {
-            "safe" -> "Berita ini terverifikasi aman dan kredibel. Aman untuk dibagikan."
-            "neutral" -> "Waspada! Informasi ini kurang akurat atau membutuhkan klarifikasi lebih lanjut."
-            else -> "Jangan sebarkan! Informasi ini terkonfirmasi hoaks. Hapus pesan segera."
-        }
-    } else {
-        when (status) {
-            "dangerous" -> "🚨 Bahaya! Tautan atau file ini terdeteksi sebagai ancaman aktif. Jangan dibuka!"
-            "warning" -> "⚠️ Waspada! Tautan atau file ini dicurigai oleh beberapa vendor keamanan."
-            else -> "✅ Bersih. Tautan atau file ini aman untuk diakses."
-        }
-    }
-    
-    var verdict = if (type == "hoax") {
-        when (status) {
-            "safe" -> "AMAN / KREDIBEL ✅"
-            "neutral" -> "WASPADA KELIRU ⚠️"
-            else -> "HOAKS TERKONFIRMASI 🚨"
-        }
-    } else {
-        when (status) {
-            "dangerous" -> "🚨 TERDETEKSI BERBAHAYA (HIGH RISK)"
-            "warning" -> "⚠️ WASPADA / MENCURIGAKAN (MEDIUM RISK)"
-            else -> "✅ BERSIH / BEBAS ANCAMAN (SAFE)"
-        }
-    }
-
-    // Try to extract from resultDetails if present
-    val details = item.resultDetails
-    if (details != null) {
-        try {
-            if (details is Map<*, *>) {
-                val adviceVal = details["safetyAdvice"] as? String 
-                    ?: (details["aiInsights"] as? Map<*, *>)?.get("recommendations") as? String
-                if (adviceVal != null) advice = adviceVal
-                
-                val verdictVal = details["verdictSummary"] as? String
-                if (verdictVal != null) {
-                    verdict = verdictVal
-                } else if (type == "scam") {
-                    val threatLevel = details["threatLevel"] as? String ?: status
-                    verdict = when (threatLevel) {
-                        "dangerous" -> "🚨 TERDETEKSI BERBAHAYA (HIGH RISK)"
-                        "warning" -> "⚠️ WASPADA / MENCURIGAKAN (MEDIUM RISK)"
-                        else -> "✅ BERSIH / BEBAS ANCAMAN (SAFE)"
-                    }
-                }
-            } else if (details is HoaxResponse) {
-                advice = details.aiInsights.recommendations
-                verdict = details.verdictSummary
-            } else if (details is ScamResponse) {
-                advice = details.safetyAdvice
-                verdict = when (details.threatLevel) {
-                    "dangerous" -> "🚨 TERDETEKSI BERBAHAYA (HIGH RISK)"
-                    "warning" -> "⚠️ WASPADA / MENCURIGAKAN (MEDIUM RISK)"
-                    else -> "✅ BERSIH / BEBAS ANCAMAN (SAFE)"
-                }
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("Screens", "Error parsing resultDetails: ${e.message}")
-        }
-    }
-
-    onShow(title, type, score, verdict, advice, status)
 }
 
 /**
@@ -1949,24 +1672,29 @@ fun ShareCardDialog(
     score: Int,
     verdict: String,
     advice: String,
-    status: String,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
     val isHoax = type == "hoax"
     
-    val statusColor = when (status) {
-        "safe" -> NeonGreen
-        "warning", "neutral" -> NeonGold
-        else -> NeonRed
+    val statusColor = if (isHoax) {
+        if (score >= 75) NeonGreen else if (score >= 40) NeonGold else NeonRed
+    } else {
+        if (score >= 75) NeonRed else if (score >= 30) NeonGold else NeonGreen
+    }
+
+    val verdictBadge = if (isHoax) {
+        if (score >= 75) "AMAN / KREDIBEL ✅" else if (score >= 40) "WASPADA KELIRU ⚠️" else "HOAKS TERKONFIRMASI 🚨"
+    } else {
+        if (score >= 75) "BAHAYA SIBER (RISK) 🚨" else if (score >= 30) "MENCURIGAKAN ⚠️" else "BERSIH / AMAN ✅"
     }
 
     val shareText = """
         [SHIELD SECURITY REPORT]
         
         Klaim: "$title"
-        Verdict: $verdict
+        Verdict: $verdictBadge
         Score: $score% (${if (isHoax) "Akurasi" else "Risiko"})
         
         Analisis Mitigasi:
@@ -1996,7 +1724,7 @@ fun ShareCardDialog(
                 )
                 
                 Spacer(modifier = Modifier.height(14.dp))
- 
+
                 // Replicating Glowing Sharing Card
                 Box(
                     modifier = Modifier
@@ -2013,7 +1741,7 @@ fun ShareCardDialog(
                         }
                         
                         Spacer(modifier = Modifier.height(12.dp))
- 
+
                         // Large Score Gauge
                         Text(
                             text = "$score%",
@@ -2028,9 +1756,9 @@ fun ShareCardDialog(
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold
                         )
- 
+
                         Spacer(modifier = Modifier.height(12.dp))
- 
+
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(4.dp))
@@ -2038,11 +1766,10 @@ fun ShareCardDialog(
                                 .padding(horizontal = 10.dp, vertical = 4.dp)
                         ) {
                             Text(
-                                text = verdict,
+                                text = verdictBadge,
                                 color = statusColor,
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                textAlign = TextAlign.Center
+                                fontWeight = FontWeight.ExtraBold
                             )
                         }
 
@@ -2086,7 +1813,7 @@ fun ShareCardDialog(
                     Button(
                         onClick = {
                             val intent = Intent(Intent.ACTION_SEND).apply {
-                                setType("text/plain")
+                                type = "text/plain"
                                 putExtra(Intent.EXTRA_TEXT, shareText)
                             }
                             context.startActivity(Intent.createChooser(intent, "Bagikan Laporan Keamanan via"))
@@ -2117,20 +1844,3 @@ fun ShareCardDialog(
         }
     }
 }
-
-// Utility extension to scale switch
-@Composable
-private fun Modifier.scale(scale: Float): Modifier = this.then(
-    Modifier.layout { measurable, constraints ->
-        val placeable = measurable.measure(constraints)
-        layout(
-            (placeable.width * scale).toInt(),
-            (placeable.height * scale).toInt()
-        ) {
-            placeable.placeRelativeWithLayer(0, 0) {
-                scaleX = scale
-                scaleY = scale
-            }
-        }
-    }
-)

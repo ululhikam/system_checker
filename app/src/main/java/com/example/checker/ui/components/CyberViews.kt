@@ -377,3 +377,83 @@ fun rememberSimulatedLogs(
     
     return activeLogs
 }
+
+/**
+ * Custom line chart with smooth cubic bezier waves and subtle gradient fill.
+ * Replicates the premium stats chart from the reference design.
+ */
+@Composable
+fun WaveChart(
+    modifier: Modifier = Modifier,
+    color: Color = NeonBlue
+) {
+    Canvas(modifier = modifier) {
+        val width = size.width
+        val height = size.height
+        val path = androidx.compose.ui.graphics.Path()
+        
+        // Coordinates for a beautiful smooth wave
+        val points = listOf(
+            Offset(0f, height * 0.75f),
+            Offset(width * 0.15f, height * 0.5f),
+            Offset(width * 0.3f, height * 0.65f),
+            Offset(width * 0.45f, height * 0.35f),
+            Offset(width * 0.6f, height * 0.5f),
+            Offset(width * 0.75f, height * 0.25f),
+            Offset(width * 0.9f, height * 0.45f),
+            Offset(width, height * 0.2f)
+        )
+        
+        path.moveTo(points[0].x, points[0].y)
+        for (i in 0 until points.size - 1) {
+            val p0 = points[i]
+            val p1 = points[i + 1]
+            val controlPoint1 = Offset(p0.x + (p1.x - p0.x) / 2f, p0.y)
+            val controlPoint2 = Offset(p0.x + (p1.x - p0.x) / 2f, p1.y)
+            path.cubicTo(
+                controlPoint1.x, controlPoint1.y,
+                controlPoint2.x, controlPoint2.y,
+                p1.x, p1.y
+            )
+        }
+        
+        // Draw path outline
+        drawPath(
+            path = path,
+            color = color,
+            style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
+        )
+        
+        // Close path to fill with gradient
+        val fillPath = androidx.compose.ui.graphics.Path().apply {
+            addPath(path)
+            lineTo(width, height)
+            lineTo(0f, height)
+            close()
+        }
+        
+        drawPath(
+            path = fillPath,
+            brush = Brush.verticalGradient(
+                colors = listOf(color.copy(alpha = 0.25f), color.copy(alpha = 0.0f))
+            )
+        )
+        
+        // Draw some nice data indicator circles
+        points.forEachIndexed { index, point ->
+            if (index == 5 || index == 7) {
+                drawCircle(
+                    color = color,
+                    radius = 4.5.dp.toPx(),
+                    center = point
+                )
+                drawCircle(
+                    color = Color.White,
+                    radius = 2.dp.toPx(),
+                    center = point
+                )
+            }
+        }
+    }
+}
+

@@ -10,6 +10,12 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ScamService, UrlScanRequest, ScamScanResult } from './scam.service';
 
+interface UploadedFileDto {
+  originalname: string;
+  size: number;
+  buffer: Buffer;
+}
+
 @Controller()
 export class ScamController {
   constructor(private readonly scamService: ScamService) {}
@@ -24,7 +30,7 @@ export class ScamController {
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(FileInterceptor('file'))
   async scanFile(
-    @UploadedFile() file: any,
+    @UploadedFile() file: UploadedFileDto | undefined,
     @Body('fileName') bodyFileName?: string,
     @Body('fileSize') bodyFileSize?: string,
   ): Promise<ScamScanResult> {

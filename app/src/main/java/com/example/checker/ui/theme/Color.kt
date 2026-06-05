@@ -2,19 +2,23 @@ package com.example.checker.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Premium Slate & Soft-Glassmorphic Palette (Consistent, Soft, and Ergonomic)
-val ObsidianBg = Color(0xFF0F172A)      // Deep slate navy background (Soft, dark gray-blue)
-val CardCarbon = Color(0xFF1E293B)      // Muted slate gray card fill (Soft slate)
-val CardBorder = Color(0xFF334155)      // Fine dark slate border
-val TextWhite = Color(0xFFF8FAFC)       // Off-white soft text (Highly readable and ergonomic)
-val TextSteel = Color(0xFF94A3B8)       // Slate gray subtitles and label text
+// Premium Soft & Modern Pastel / Slate Palette (Inspired by Reference Design)
+val ObsidianBg = Color(0xFFF3F5F9)      // Soft pastel gray-blue background (light theme)
+val CardCarbon = Color(0xFFFFFFFF)      // Pure white card background
+val CardBorder = Color(0xFFE2E8F0)      // Soft gray border for cards
+val TextWhite = Color(0xFF1E293B)       // Deep slate navy text (high contrast, readable)
+val TextSteel = Color(0xFF64748B)       // Muted slate gray for labels and subtitles
 
-// Premium Softened Indicating Accents (Consistent, Soft, and Harmonious)
-val NeonGreen = Color(0xFF10B981)       // Soft Emerald Mint (Safe / Verified / Fact-correct)
-val NeonRed = Color(0xFFF43F5E)         // Soft Coral Rose (Dangerous / Threat / Scam)
-val NeonBlue = Color(0xFF38BDF8)        // Soft Sky Blue (AI Context / Neutral Analysis)
-val CyberPurple = Color(0xFF818CF8)     // Soft Lavender Indigo (Gemini / DeepSeek Engines)
-val NeonGold = Color(0xFFF59E0B)        // Soft Warm Amber (Warning / Attention needed)
+// Custom Card Fills
+val CardDark = Color(0xFF181A1F)        // Deep charcoal background for premium dark cards
+val TextOnDark = Color(0xFFF8FAFC)      // White text for dark cards
+
+// Premium Pastel Indicating Accents (Softened)
+val NeonGreen = Color(0xFF5ED5A8)       // Soft Mint Green (Safe / Verified)
+val NeonRed = Color(0xFFF87171)         // Soft Coral Rose (Dangerous / Threat)
+val NeonBlue = Color(0xFF60A5FA)        // Soft Sky Blue (AI Context / Neutral Analysis)
+val CyberPurple = Color(0xFFC084FC)     // Soft Lavender Indigo (Gemini / DeepSeek Engines)
+val NeonGold = Color(0xFFFBBF24)        // Soft Warm Amber (Warning / Attention)
 
 // Semantic Color Aliases for consistent naming
 val BackgroundDark = ObsidianBg

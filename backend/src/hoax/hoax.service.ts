@@ -1,8 +1,5 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-call */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
-import axios from 'axios';
+import axios, { AxiosResponse } from 'axios';
 
 export class FactCheckRequest {
   text?: string;
@@ -61,6 +58,14 @@ interface GeminiCandidate {
   content?: {
     parts?: GeminiContentPart[];
   };
+  groundingMetadata?: {
+    groundingChunks?: Array<{
+      web?: {
+        uri?: string;
+        title?: string;
+      };
+    }>;
+  };
 }
 
 interface GeminiResponse {
@@ -78,14 +83,55 @@ interface DeepSeekResponse {
 }
 
 interface LlmParsedResponse {
-  trustScore: number;
-  verdictSummary: string;
-  explanation: string;
-  correctedFact: string;
-  fallaciesDetected: string[];
-  contextNarrative: string;
-  credibilityAnalysis: string;
-  recommendations: string;
+  status: 'FAKTUAL' | 'HOAKS' | 'DISINFORMASI' | 'SATIRE' | 'UNVERIFIED';
+  confidence_score: number;
+  reasoning: string;
+  correctedFact?: string;
+  source_links: string[];
+}
+
+function cleanQuery(query: string): string {
+  let cleaned = query
+    .replace(/[.,/#!$%^&*;:{}=\-_`~()?"'“”]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (cleaned.length > 120) {
+    const truncated = cleaned.substring(0, 120);
+    const lastSpace = truncated.lastIndexOf(' ');
+    if (lastSpace > 50) {
+      cleaned = truncated.substring(0, lastSpace);
+    } else {
+      cleaned = truncated;
+    }
+  }
+  return cleaned;
+}
+
+function parseCleanJson(rawText: string): unknown {
+  let cleaned = rawText.trim();
+  if (cleaned.startsWith('```')) {
+    cleaned = cleaned
+      .replace(/^```[a-zA-Z]*\n/, '')
+      .replace(/\n```$/, '')
+      .trim();
+  }
+  try {
+    return JSON.parse(cleaned);
+  } catch (e: unknown) {
+    const errMessage = e instanceof Error ? e.message : String(e);
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (match) {
+      try {
+        return JSON.parse(match[0]);
+      } catch {
+        throw new Error(
+          `JSON parsing failed: ${errMessage}. Cleaned text: ${cleaned}`,
+        );
+      }
+    }
+    throw e;
+  }
 }
 
 @Injectable()
@@ -148,34 +194,54 @@ export class HoaxService {
       publisher: string;
       url: string;
     }> = [];
-    try {
-      const response = (await axios.get(
-        `https://factchecktools.googleapis.com/v1alpha1/claims:search`,
-        {
-          params: {
-            query: queryText,
-            key: googleApiKey,
-            languageCode: 'id',
-          },
-        },
-      )) as unknown as { data: GoogleFactCheckResponse };
 
-      if (response.data && response.data.claims) {
-        googleFactChecks = response.data.claims.map(
-          (c: GoogleFactCheckClaim) => ({
-            claim: c.text,
-            claimant: c.claimant || 'Tidak diketahui',
-            verdict: c.claimReview?.[0]?.textualRating || 'Belum terverifikasi',
-            reviewDate: c.claimReview?.[0]?.reviewDate || '',
-            publisher: c.claimReview?.[0]?.publisher?.name || 'Fact Checker',
-            url: c.claimReview?.[0]?.url || '',
-          }),
+    const fetchFactChecks = async (queryStr: string) => {
+      try {
+        const response = (await axios.get(
+          `https://factchecktools.googleapis.com/v1alpha1/claims:search`,
+          {
+            params: {
+              query: queryStr,
+              key: googleApiKey,
+              languageCode: 'id',
+            },
+          },
+        )) as unknown as { data: GoogleFactCheckResponse };
+        return response.data?.claims || [];
+      } catch (error) {
+        this.logger.warn(
+          `Google Fact Check API query "${queryStr}" failed: ${error instanceof Error ? error.message : error}`,
         );
+        return [];
+      }
+    };
+
+    try {
+      // 1. Try original query
+      let claims = await fetchFactChecks(queryText);
+
+      // 2. If no claims, try simplified cleaned query to improve matching rate
+      const cleaned = cleanQuery(queryText);
+      if (claims.length === 0 && cleaned !== queryText && cleaned.length > 5) {
+        claims = await fetchFactChecks(cleaned);
+      }
+
+      if (claims && claims.length > 0) {
+        googleFactChecks = claims.map((c: GoogleFactCheckClaim) => ({
+          claim: c.text,
+          claimant: c.claimant || 'Tidak diketahui',
+          verdict: c.claimReview?.[0]?.textualRating || 'Belum terverifikasi',
+          reviewDate: c.claimReview?.[0]?.reviewDate || '',
+          publisher: c.claimReview?.[0]?.publisher?.name || 'Fact Checker',
+          url: c.claimReview?.[0]?.url || '',
+        }));
       }
     } catch (error: unknown) {
       const message =
         error instanceof Error ? error.message : 'Unknown error occurred';
-      this.logger.warn(`Google Fact Check API failed (graceful fallback): ${message}`);
+      this.logger.warn(
+        `Google Fact Check API failed (graceful fallback): ${message}`,
+      );
       googleFactChecks = [];
     }
 
@@ -190,58 +256,177 @@ export class HoaxService {
     let recommendations = '';
 
     try {
-      const prompt = `Anda adalah mesin AI Keamanan Siber dan Anti-Disinformasi Tercanggih (Shield AI Engine).
-Analisis secara mendalam teks klaim/berita berikut untuk mendeteksi kebenaran, potensi hoaks, manipulasi naratif, atau rekayasa sosial.
-
-Klaim yang diinput Pengguna: "${queryText}"
-Data Kecocokan Google Fact Check Instan: ${JSON.stringify(googleFactChecks)}
-
-TUGAS UTAMA ANDA:
-1. **Analisis Konteks Global**: Lacak, cari, dan evaluasi narasi klaim ini secara global berdasarkan database pengetahuan Anda dari berbagai website, platform media sosial (seperti Instagram, TikTok, Facebook, WhatsApp berantai), dan rilis berita media nasional/global.
-2. **Koreksi Fakta Sebenarnya**: Tuliskan ringkasan informasi yang BENAR dan faktual di dalam field "correctedFact" (maksimal 2 kalimat tegas, dimulai dengan emoji ✅, menerangkan fakta sebenarnya yang bertolak belakang dengan hoaks tersebut).
-3. **Temukan Sumber & Referensi Nyata**: Di dalam field "contextNarrative", Anda WAJIB menyertakan ringkasan analisis narasi DAN menyertakan daftar bullet-points sumber referensi digital valid (seperti situs turnbackhoax.id, website Kementerian Kominfo, kompas.com, tempo.co, detik.com, akun Instagram resmi yang menyebarkan atau membantah, dll.) yang berkaitan dengan informasi ini. Format daftar sumber referensi dengan jelas dalam bahasa Indonesia menggunakan format Markdown yang rapi!
-4. **Analisis Kredibilitas**: Tulis analisis mendalam di field "credibilityAnalysis" mengenai tingkat kepercayaan sumber informasi asli, mengapa narasi ini bisa menyebar, dan kelemahan argumennya.
-5. **Logical Fallacy**: Identifikasi kebohongan atau cacat logika berpikir (Logical Fallacy) yang terkandung di dalam teks klaim pada field "fallaciesDetected".
-
-Format jawaban Anda harus berupa JSON valid tanpa embel-embel markdown block \`\`\`json. Skema JSON harus tepat seperti ini:
-{
-  "trustScore": <angka 0-100, di mana 100 sangat kredibel/aman, dan 0 sangat berbahaya/hoaks>,
-  "verdictSummary": "<Kesimpulan status kebenaran dalam 1 kalimat tegas berpola emoji, misal: 🚨 HOAKS TERKONFIRMASI: ... atau ⚠️ MISLEADING: ... atau ✅ AMAN TERVERIFIKASI: ...>",
-  "explanation": "<Penjelasan rinci dan analitis terstruktur dalam 2-3 paragraf mengapa berita ini valid atau hoaks>",
-  "correctedFact": "<Informasi yang valid dan faktual sebenarnya untuk mengoreksi hoaks ini (Maksimal 2 kalimat)>",
-  "fallaciesDetected": ["<Nama cacat logika 1>", "<cacat logika 2>"],
-  "contextNarrative": "<Ringkasan evaluasi penyebaran global.\\n\\n**SUMBER REFERENSI VERIFIKASI DIGITAL:**\\n• 🌐 **Situs/Portal Berita**: [Nama Media] (keterangan debunk/rilis)\\n• 📱 **Media Sosial (IG/TikTok/WA)**: [Detail akun/grup yang menyebarkan]\\n• 🛡️ **Pihak Berwenang**: [Kominfo/Mafindo/BMKG dll.]>",
-  "credibilityAnalysis": "<Analisis kredibilitas sumber, bukti digital, dan keandalan narasumber dalam 1-2 paragraf>",
-  "recommendations": "<Saran mitigasi taktis bagi pengguna untuk menghindari penipuan atau kepanikan akibat klaim ini>"
-}`;
+      let parsed: LlmParsedResponse;
 
       if (payload.engine === 'gemini' && geminiKey) {
-        const llmResponse = (await axios.post(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
-          {
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: { responseMimeType: 'application/json' },
-          },
-        )) as unknown as { data: GeminiResponse };
+        // Step 1: Web grounding search with Gemini
+        const step1Prompt = `Lakukan analisis cek fakta mendalam dan pencarian web terbaru untuk memverifikasi klaim berikut.
+
+Klaim: "${queryText}"
+Data Referensi Awal (jika ada): ${JSON.stringify(googleFactChecks)}
+
+Tugas Anda:
+1. Cari informasi valid mengenai klaim ini di internet menggunakan pencarian Google.
+2. Tentukan klasifikasi status dari klaim ini. Pilih salah satu dari klasifikasi berikut secara tepat:
+   - FAKTUAL: Jika klaim benar-benar terjadi, didukung bukti kuat, dan bukan rekayasa.
+   - HOAKS: Jika klaim sepenuhnya salah, bohong, atau rekayasa.
+   - DISINFORMASI: Jika klaim mengandung informasi yang diputarbalikkan, manipulasi konteks, atau setengah benar demi tujuan tertentu.
+   - SATIRE: Jika klaim merupakan humor, parodi, atau sindiran politik/sosial yang tidak untuk dipercaya sebagai kebenaran.
+   - UNVERIFIED: Jika tidak ditemukan bukti atau informasi yang cukup di internet untuk membuktikan benar atau salahnya klaim.
+3. Tentukan confidence score (tingkat keyakinan analisis Anda) dari skala 0 hingga 100.
+4. Berikan penjelasan singkat maksimal 3 kalimat mengenai alasan Anda memilih status tersebut dan jelaskan fakta yang sebenarnya.
+`;
+
+        let retries = 3;
+        let delayMs = 1500;
+        let step1Response: AxiosResponse<GeminiResponse> | null = null;
+
+        while (retries > 0) {
+          try {
+            step1Response = await axios.post(
+              `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
+              {
+                contents: [{ parts: [{ text: step1Prompt }] }],
+                tools: [{ google_search: {} }],
+              },
+            );
+            break;
+          } catch (err: unknown) {
+            retries--;
+            const axiosErr = err as {
+              response?: { status?: number; data?: any };
+            };
+            if (axiosErr.response?.status === 429 && retries > 0) {
+              this.logger.warn(
+                `Gemini API 429 rate limit hit in HoaxService (Step 1). Retrying in ${delayMs}ms... (Retries left: ${retries})`,
+              );
+              await new Promise((resolve) => setTimeout(resolve, delayMs));
+              delayMs *= 2;
+            } else {
+              this.logger.error(
+                `Gemini API Step 1 failed: ${JSON.stringify(axiosErr.response?.data || err)}`,
+              );
+              throw err;
+            }
+          }
+        }
+
+        const step1Text =
+          step1Response?.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+        // Extract unique grounding links
+        const groundedLinks: string[] = [];
+        const groundingChunks =
+          step1Response?.data?.candidates?.[0]?.groundingMetadata
+            ?.groundingChunks;
+        if (groundingChunks && Array.isArray(groundingChunks)) {
+          for (const chunk of groundingChunks) {
+            if (chunk.web?.uri) {
+              const uri = chunk.web.uri;
+              if (!groundedLinks.includes(uri)) {
+                groundedLinks.push(uri);
+              }
+              // Enrich googleFactChecks
+              const isDuplicate = googleFactChecks.some((fc) => fc.url === uri);
+              if (!isDuplicate) {
+                googleFactChecks.push({
+                  claim: queryText,
+                  claimant: 'Sumber Publik / Media Digital',
+                  verdict: 'Rujukan Web',
+                  reviewDate: new Date().toLocaleDateString('id-ID'),
+                  publisher: chunk.web.title || 'Sumber Informasi Web',
+                  url: uri,
+                });
+              }
+            }
+          }
+        }
+
+        // Step 2: Format to strict JSON
+        const step2Prompt = `Analisis laporan verifikasi klaim berikut dan konversikan menjadi format JSON murni yang terstruktur sesuai dengan skema yang diberikan.
+
+Teks Laporan Verifikasi:
+"${step1Text}"
+
+Skema JSON yang Wajib Dipenuhi:
+{
+  "status": "FAKTUAL" | "HOAKS" | "DISINFORMASI" | "SATIRE" | "UNVERIFIED",
+  "confidence_score": number (skala 0-100),
+  "reasoning": "penjelasan singkat padat maksimal 3 kalimat",
+  "correctedFact": "koreksi fakta sebenarnya (jika hoaks/disinformasi, jelaskan fakta riilnya secara jelas. Jika faktual, jelaskan mengapa ini benar. Maksimal 2 kalimat)"
+}
+
+Aturan Tambahan:
+- Kembalikan HANYA JSON murni. Jangan tambahkan markdown code block (\`\`\`json), markdown formatting, atau karakter tambahan lainnya di luar format JSON.
+`;
+
+        retries = 3;
+        delayMs = 1500;
+        let step2Response: AxiosResponse<GeminiResponse> | null = null;
+
+        while (retries > 0) {
+          try {
+            step2Response = await axios.post(
+              `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
+              {
+                contents: [{ parts: [{ text: step2Prompt }] }],
+                generationConfig: { responseMimeType: 'application/json' },
+              },
+            );
+            break;
+          } catch (err: unknown) {
+            retries--;
+            const axiosErr = err as {
+              response?: { status?: number; data?: any };
+            };
+            if (axiosErr.response?.status === 429 && retries > 0) {
+              this.logger.warn(
+                `Gemini API 429 rate limit hit in HoaxService (Step 2). Retrying in ${delayMs}ms... (Retries left: ${retries})`,
+              );
+              await new Promise((resolve) => setTimeout(resolve, delayMs));
+              delayMs *= 2;
+            } else {
+              this.logger.error(
+                `Gemini API Step 2 failed: ${JSON.stringify(axiosErr.response?.data || err)}`,
+              );
+              throw err;
+            }
+          }
+        }
 
         const rawText =
-          llmResponse.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        const parsed = JSON.parse(rawText.trim()) as LlmParsedResponse;
-        trustScore = parsed.trustScore;
-        verdictSummary = parsed.verdictSummary;
-        explanation = parsed.explanation;
-        correctedFact = parsed.correctedFact;
-        fallaciesDetected = parsed.fallaciesDetected;
-        contextNarrative = parsed.contextNarrative;
-        credibilityAnalysis = parsed.credibilityAnalysis;
-        recommendations = parsed.recommendations;
+          step2Response?.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        parsed = parseCleanJson(rawText) as LlmParsedResponse;
+        parsed.source_links = groundedLinks;
       } else {
         // DeepSeek integration
+        const deepseekPrompt = `Analisis klaim berikut berdasarkan KONTEKS BERITA yang diberikan (jika ada). Jika KONTEKS BERITA kosong, analisis berdasarkan pengetahuan internal Anda secara bijak.
+
+Klaim: "${queryText}"
+KONTEKS BERITA: ${JSON.stringify(googleFactChecks)}
+
+ATURAN KETAT:
+1. Jika KONTEKS BERITA tidak kosong, analisis wajib mengutamakan KONTEKS BERITA tersebut.
+2. Jika KONTEKS BERITA kosong atau tidak mencukupi, Anda BOLEH menggunakan pengetahuan internal Anda untuk memverifikasi apakah klaim ini adalah hoaks yang umum beredar, misinformasi, fakta nyata, atau satire.
+3. Jika Anda tidak yakin atau tidak memiliki informasi internal tentang klaim ini, isi status dengan "UNVERIFIED".
+4. Ekstrak URL sumber pendukung ke dalam field "source_links" jika ada.
+5. Klasifikasikan status menjadi salah satu dari: [FAKTUAL, HOAKS, DISINFORMASI, SATIRE, UNVERIFIED].
+
+FORMAT BALASAN (WAJIB JSON MURNI TANPA EMBEL-EMBEL MARKDOWN):
+{
+  "status": "<Salah satu dari: FAKTUAL, HOAKS, DISINFORMASI, SATIRE, UNVERIFIED>",
+  "confidence_score": <angka 0-100>,
+  "reasoning": "<Penjelasan singkat, padat, dan langsung pada intinya maksimal 3 kalimat.>",
+  "correctedFact": "<Koreksi fakta yang sebenarnya, maksimal 2 kalimat.>",
+  "source_links": ["<url1>", "<url2>"]
+}
+`;
+
         const llmResponse = (await axios.post(
           'https://api.deepseek.com/v1/chat/completions',
           {
             model: 'deepseek-chat',
-            messages: [{ role: 'user', content: prompt }],
+            messages: [{ role: 'user', content: deepseekPrompt }],
             response_format: { type: 'json_object' },
           },
           {
@@ -250,16 +435,49 @@ Format jawaban Anda harus berupa JSON valid tanpa embel-embel markdown block \`\
         )) as unknown as { data: DeepSeekResponse };
 
         const rawText = llmResponse.data.choices?.[0]?.message?.content || '';
-        const parsed = JSON.parse(rawText.trim()) as LlmParsedResponse;
-        trustScore = parsed.trustScore;
-        verdictSummary = parsed.verdictSummary;
-        explanation = parsed.explanation;
-        correctedFact = parsed.correctedFact;
-        fallaciesDetected = parsed.fallaciesDetected;
-        contextNarrative = parsed.contextNarrative;
-        credibilityAnalysis = parsed.credibilityAnalysis;
-        recommendations = parsed.recommendations;
+        parsed = parseCleanJson(rawText) as LlmParsedResponse;
       }
+
+      // Map strict JSON fields to local variables returned in FactCheckResult
+      if (parsed.status === 'FAKTUAL') {
+        trustScore = parsed.confidence_score;
+      } else if (parsed.status === 'UNVERIFIED') {
+        trustScore = 50;
+      } else if (parsed.status === 'SATIRE') {
+        trustScore = 40;
+      } else {
+        // HOAKS or DISINFORMASI
+        trustScore = Math.max(0, 100 - parsed.confidence_score);
+      }
+
+      if (parsed.status === 'FAKTUAL') {
+        status = 'safe';
+      } else if (parsed.status === 'UNVERIFIED' || parsed.status === 'SATIRE') {
+        status = 'neutral';
+      } else {
+        status = 'unsafe';
+      }
+
+      verdictSummary = `[${parsed.status}] ${parsed.reasoning}`;
+      explanation = parsed.reasoning;
+      correctedFact =
+        parsed.status === 'HOAKS' || parsed.status === 'DISINFORMASI'
+          ? `✅ Fakta: ${parsed.correctedFact || parsed.reasoning}`
+          : parsed.correctedFact || parsed.reasoning;
+
+      fallaciesDetected = [parsed.status];
+
+      const linksMarkdown =
+        parsed.source_links && parsed.source_links.length > 0
+          ? parsed.source_links.map((link) => `• 🌐 ${link}`).join('\n')
+          : '• Tidak ada tautan referensi dalam konteks berita.';
+
+      contextNarrative = `Analisis dilakukan dengan membandingkan klaim terhadap data Google Fact Check & penelusuran web terbaru.\n\n**SUMBER REFERENSI DIGITAL:**\n${linksMarkdown}`;
+      credibilityAnalysis = `Analisis AI menunjukkan tingkat keyakinan ${parsed.confidence_score}% dengan status verifikasi ${parsed.status}.`;
+      recommendations =
+        parsed.status === 'HOAKS' || parsed.status === 'DISINFORMASI'
+          ? 'Jangan menyebarluaskan informasi ini ke platform media sosial atau grup obrolan keluarga Anda.'
+          : 'Tetap lakukan verifikasi silang pada berita sensitif menggunakan portal media resmi.';
     } catch (err: unknown) {
       const message =
         err instanceof Error ? err.message : 'Unknown error occurred';

@@ -22,7 +22,7 @@ class ClipboardMonitorService : Service() {
     private val scope = CoroutineScope(Dispatchers.IO + job)
     
     private lateinit var clipboard: ClipboardManager
-    private val repository = CheckerRepository()
+    private val repository by lazy { CheckerRepository(this) }
 
     companion object {
         private const val FOREGROUND_CHANNEL_ID = "cyber_shield_guard"
