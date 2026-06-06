@@ -14,7 +14,7 @@ export interface FactCheckResult {
   ocrExtractedText?: string;
   verdictSummary: string;
   explanation: string;
-  correctedFact: string; // Fakta yang sebenarnya (Koreksi)
+  correctedFact: string;
   fallaciesDetected: string[];
   googleFactChecks: Array<{
     claim: string;
@@ -302,6 +302,9 @@ Tugas Anda:
               );
               await new Promise((resolve) => setTimeout(resolve, delayMs));
               delayMs *= 2;
+            } else if (axiosErr.response?.status === 429) {
+              this.logger.error('Gemini API 429 rate limit hit - all retries exhausted (Step 1)');
+              return this.createLimitReachedResult(queryText, payload.engine, googleFactChecks);
             } else {
               this.logger.error(
                 `Gemini API Step 1 failed: ${JSON.stringify(axiosErr.response?.data || err)}`,
@@ -385,6 +388,9 @@ Aturan Tambahan:
               );
               await new Promise((resolve) => setTimeout(resolve, delayMs));
               delayMs *= 2;
+            } else if (axiosErr.response?.status === 429) {
+              this.logger.error('Gemini API 429 rate limit hit - all retries exhausted (Step 2)');
+              return this.createLimitReachedResult(queryText, payload.engine, googleFactChecks);
             } else {
               this.logger.error(
                 `Gemini API Step 2 failed: ${JSON.stringify(axiosErr.response?.data || err)}`,
@@ -422,19 +428,50 @@ FORMAT BALASAN (WAJIB JSON MURNI TANPA EMBEL-EMBEL MARKDOWN):
 }
 `;
 
-        const llmResponse = (await axios.post(
-          'https://api.deepseek.com/v1/chat/completions',
-          {
-            model: 'deepseek-chat',
-            messages: [{ role: 'user', content: deepseekPrompt }],
-            response_format: { type: 'json_object' },
-          },
-          {
-            headers: { Authorization: `Bearer ${deepseekKey}` },
-          },
-        )) as unknown as { data: DeepSeekResponse };
+        let retries = 3;
+        let delayMs = 1500;
+        let llmResponse: any = null;
 
-        const rawText = llmResponse.data.choices?.[0]?.message?.content || '';
+        while (retries > 0) {
+          try {
+            llmResponse = await axios.post(
+              // pakai 'https://api.deepseek.com/v1/chat/completions' jika sudah pakai API Key yang dibuat dari deepseek (resmi) langsung
+              'https://openrouter.ai/api/v1/chat/completions',
+                {
+                  model: 'deepseek-v4-flash',
+                  messages: [{ role: 'user', content: deepseekPrompt }],
+                  response_format: { type: 'json_object' },
+                },
+                {
+                  headers: {
+                    Authorization: `Bearer ${deepseekKey}`,
+                    'Content-Type': 'application/json',
+                  },
+                  timeout: 20000,
+                },
+            );
+            break;
+          } catch (err: unknown) {
+            retries--;
+            const axiosErr = err as {
+              response?: { status?: number; data?: any };
+            };
+            if (axiosErr.response?.status === 429 && retries > 0) {
+              this.logger.warn(
+                `DeepSeek API 429 rate limit hit. Retrying in ${delayMs}ms... (Retries left: ${retries})`,
+              );
+              await new Promise((resolve) => setTimeout(resolve, delayMs));
+              delayMs *= 2;
+            } else if (axiosErr.response?.status === 429) {
+              this.logger.error('DeepSeek API 429 rate limit hit - all retries exhausted');
+              return this.createLimitReachedResult(queryText, payload.engine, googleFactChecks);
+            } else {
+              throw err;
+            }
+          }
+        }
+
+        const rawText = llmResponse?.data?.choices?.[0]?.message?.content || '';
         parsed = parseCleanJson(rawText) as LlmParsedResponse;
       }
 
@@ -462,7 +499,7 @@ FORMAT BALASAN (WAJIB JSON MURNI TANPA EMBEL-EMBEL MARKDOWN):
       explanation = parsed.reasoning;
       correctedFact =
         parsed.status === 'HOAKS' || parsed.status === 'DISINFORMASI'
-          ? `✅ Fakta: ${parsed.correctedFact || parsed.reasoning}`
+          ? `Fakta: ${parsed.correctedFact || parsed.reasoning}`
           : parsed.correctedFact || parsed.reasoning;
 
       fallaciesDetected = [parsed.status];
@@ -487,14 +524,6 @@ FORMAT BALASAN (WAJIB JSON MURNI TANPA EMBEL-EMBEL MARKDOWN):
       );
     }
 
-    if (trustScore >= 75) {
-      status = 'safe';
-    } else if (trustScore >= 40) {
-      status = 'neutral';
-    } else {
-      status = 'unsafe';
-    }
-
     return {
       trustScore,
       status,
@@ -506,10 +535,33 @@ FORMAT BALASAN (WAJIB JSON MURNI TANPA EMBEL-EMBEL MARKDOWN):
       googleFactChecks,
       aiInsights: {
         engineUsed:
-          payload.engine === 'gemini' ? 'Gemini 2.5 Flash' : 'DeepSeek V3',
+          payload.engine === 'gemini' ? 'Gemini 2.5 Flash' : 'DeepSeek V4 Flash',
         contextNarrative,
         credibilityAnalysis,
         recommendations,
+      },
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  private createLimitReachedResult(query: string, engine: string, factChecks: any[]): FactCheckResult {
+    const engineName = engine === 'gemini' ? 'Gemini' : 'DeepSeek';
+    const altEngine = engine === 'gemini' ? 'DeepSeek' : 'Gemini';
+
+    return {
+      trustScore: 50,
+      status: 'neutral',
+      query: query,
+      verdictSummary: `⚠️ LIMIT HARIAN AI TERCAPAI (ERROR 429)`,
+      explanation: `Maaf, kuota harian analisis AI (${engineName}) kami sedang mencapai batas limit (Rate Limit 429). Seluruh proses pemindaian (termasuk Fact Check) dihentikan sementara untuk menjaga stabilitas sistem. Mohon coba lagi beberapa saat lagi.`,
+      correctedFact: 'Layanan pemindaian sedang sibuk. Silakan periksa kembali nanti.',
+      fallaciesDetected: ['LIMIT_EXCEEDED'],
+      googleFactChecks: [],
+      aiInsights: {
+        engineUsed: engine === 'gemini' ? 'Gemini 2.5 Flash' : 'DeepSeek V4 Flash',
+        contextNarrative: 'Analisis dihentikan karena limit harian tercapai.',
+        credibilityAnalysis: 'Sistem tidak dapat melakukan kalkulasi saat ini.',
+        recommendations: `Gunakan engine AI lain (${altEngine}) sebagai alternatif atau coba lagi dalam beberapa jam.`,
       },
       timestamp: new Date().toISOString(),
     };

@@ -167,7 +167,7 @@ export class HistoryService {
           explanation:
             'Potensi gempa nyata, namun ramalan hari dan waktu terjadinya adalah hoax.',
           aiInsights: {
-            engineUsed: 'DeepSeek V3',
+            engineUsed: 'DeepSeek V4 Flash',
             contextNarrative:
               'Kecemasan megathrust dieksploitasi untuk kepanikan publik.',
             credibilityAnalysis: 'Bantahan resmi telah dikeluarkan oleh BMKG.',
