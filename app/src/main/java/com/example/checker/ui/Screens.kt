@@ -1,9 +1,12 @@
 package com.example.checker.ui
 
-import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.widget.Toast
+import com.google.gson.Gson
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -38,6 +41,9 @@ import com.example.checker.data.*
 import com.example.checker.service.ClipboardMonitorService
 import com.example.checker.ui.components.*
 import com.example.checker.ui.theme.*
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
@@ -107,7 +113,6 @@ fun DashboardScreen(
     repository: CheckerRepository
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val historyList by repository.historyList.collectAsState()
     
     var isShieldActive by remember { mutableStateOf(ClipboardMonitorService.isServiceRunning) }
@@ -142,7 +147,7 @@ fun DashboardScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "SHIELD SYSTEM v1.2",
+                            text = "SHIELD SYSTEM v1.0",
                             color = NeonBlue,
                             fontFamily = FontFamily.Monospace,
                             fontSize = 12.sp,
@@ -274,7 +279,7 @@ fun DashboardScreen(
                         .padding(12.dp)
                 ) {
                     Column(verticalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxHeight()) {
-                        Text(text = "AMAN ✅", color = NeonGreen, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text(text = "AMAN", color = NeonGreen, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                         Text(text = "$safeItemsCount", color = TextWhite, fontSize = 28.sp, fontWeight = FontWeight.Black)
                         Text(text = "item aman", color = TextSteel, fontSize = 11.sp)
                     }
@@ -290,7 +295,7 @@ fun DashboardScreen(
                         .padding(12.dp)
                 ) {
                     Column(verticalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxHeight()) {
-                        Text(text = "WASPADA ⚠️", color = NeonGold, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text(text = "WASPADA", color = NeonGold, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                         Text(text = "$warningItemsCount", color = TextWhite, fontSize = 28.sp, fontWeight = FontWeight.Black)
                         Text(text = "item netral", color = TextSteel, fontSize = 11.sp)
                     }
@@ -306,7 +311,7 @@ fun DashboardScreen(
                         .padding(12.dp)
                 ) {
                     Column(verticalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxHeight()) {
-                        Text(text = "BAHAYA 🚨", color = NeonRed, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text(text = "BAHAYA", color = NeonRed, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                         Text(text = "$threatItemsCount", color = TextWhite, fontSize = 28.sp, fontWeight = FontWeight.Black)
                         Text(text = "ancaman diblok", color = TextSteel, fontSize = 11.sp)
                     }
@@ -438,6 +443,33 @@ fun HoaxScreen(
     var activeResult by remember { mutableStateOf<HoaxResponse?>(null) }
     var showShareDialog by remember { mutableStateOf<HoaxResponse?>(null) }
 
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            selectedImageUri = it.toString()
+            // Proses OCR
+            try {
+                val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+                val image = InputImage.fromFilePath(context, it)
+                recognizer.process(image)
+                    .addOnSuccessListener { visionText ->
+                        if (visionText.text.isNotBlank()) {
+                            queryText = visionText.text
+                            Toast.makeText(context, "Teks Berhasil Diekstrak dari Gambar!", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(context, "Tidak ada teks yang terdeteksi di gambar.", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    .addOnFailureListener { e ->
+                        Toast.makeText(context, "Gagal OCR: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
+            } catch (e: Exception) {
+                Toast.makeText(context, "Gagal memproses gambar: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     val ocrLogPool = listOf(
         "Mengekstrak file gambar...",
         "Menginisialisasi engine OCR cerdas...",
@@ -514,14 +546,7 @@ fun HoaxScreen(
                             .background(CardCarbon)
                             .border(1.dp, CardBorder, RoundedCornerShape(10.dp))
                             .clickable {
-                                // Simulate cropping/uploading image snapshot containing hoax text
-                                selectedImageUri = "content://media/external/images/media/hoax_screenshot.jpg"
-                                queryText = "SELAMAT! Nomor Whatsapp Anda terpilih memenangkan hadiah Rp 150.000.000 dari program undian Shopee 2026. Klik link bit.ly/shopee-hadiah-2026 untuk mengklaim!"
-                                Toast.makeText(
-                                    context,
-                                    "Screenshot Berhasil Dimuat (Mode Simulasi OCR)!", 
-                                    Toast.LENGTH_SHORT
-                                ).show()
+                                imagePickerLauncher.launch("image/*")
                             }
                             .padding(vertical = 12.dp, horizontal = 8.dp),
                         contentAlignment = Alignment.Center
@@ -637,7 +662,7 @@ fun HoaxScreen(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Column {
-                            Text(text = "DeepSeek V3", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text(text = "DeepSeek V4 Flash", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                             Text(text = "Analisis Kritis & Konteks", color = TextSteel, fontSize = 10.sp)
                         }
                     }
@@ -666,7 +691,11 @@ fun HoaxScreen(
                             val res = repository.checkHoax(queryText, selectedImageUri, selectedEngine)
                             res.onSuccess {
                                 activeResult = it
+                                    isScanning = false
+                            }
+                            res.onFailure {
                                 isScanning = false
+                                Toast.makeText(context, "Gagal melakukan pemindaian: ${it.message}", Toast.LENGTH_LONG).show()
                             }
                         }
                     },
@@ -783,7 +812,7 @@ fun HoaxScreen(
                         
                         if (result.fallaciesDetected.isNotEmpty()) {
                             Spacer(modifier = Modifier.height(12.dp))
-                            Text(text = "Cacat Logika Terdeteksi:", color = NeonBlue, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(text = "Terdeteksi:", color = NeonBlue, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -876,8 +905,12 @@ fun HoaxScreen(
                     }
                 }
 
-                // Google Fact Check Matches Section (if available)
-                if (result.googleFactChecks.isNotEmpty()) {
+                // Google Fact Check Matches Section (Hanya tampilkan jika ada hasil verifikasi nyata)
+                val validFactChecks = result.googleFactChecks.filter { 
+                    it.verdict != "Rujukan Web" && it.verdict != "Belum terverifikasi" 
+                }
+
+                if (validFactChecks.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
                         text = "VERIFIKASI FAKTA GLOBAL",
@@ -888,13 +921,19 @@ fun HoaxScreen(
                         modifier = Modifier.padding(bottom = 8.dp)
                     )
 
-                    result.googleFactChecks.forEach { check ->
+                    validFactChecks.forEach { check ->
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(CardCarbon)
                                 .border(1.dp, CardBorder, RoundedCornerShape(10.dp))
+                                .clickable {
+                                    if (check.url.isNotEmpty()) {
+                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(check.url))
+                                        context.startActivity(intent)
+                                    }
+                                }
                                 .padding(12.dp)
                         ) {
                             Column {
@@ -921,9 +960,13 @@ fun HoaxScreen(
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Text(text = "Klaim: \"${check.claim}\"", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                                 Spacer(modifier = Modifier.height(4.dp))
-                                Text(text = "Oleh: ${check.claimant}", color = TextSteel, fontSize = 11.sp)
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(text = "Oleh: ${check.claimant}", color = TextSteel, fontSize = 11.sp, modifier = Modifier.weight(1f))
+                                    Icon(imageVector = Icons.Default.OpenInNew, contentDescription = null, tint = NeonBlue, modifier = Modifier.size(14.dp))
+                                }
                             }
                         }
+                        Spacer(modifier = Modifier.height(8.dp))
                     }
                 }
 
@@ -991,9 +1034,45 @@ fun ScamScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     
-    var activeTab by remember { mutableStateOf(0) } // 0 = URL, 1 = FILE
+    var activeTab by remember { mutableIntStateOf(0) } // 0 = URL, 1 = FILE
     var targetUrl by remember { mutableStateOf("") }
     var selectedFile by remember { mutableStateOf<File?>(null) }
+    var selectedFileName by remember { mutableStateOf("") }
+    var selectedFileSize by remember { mutableStateOf("") }
+    
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            try {
+                // Get file info
+                val cursor = context.contentResolver.query(it, null, null, null, null)
+                cursor?.use { c ->
+                    val nameIndex = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    val sizeIndex = c.getColumnIndex(OpenableColumns.SIZE)
+                    if (c.moveToFirst()) {
+                        selectedFileName = c.getString(nameIndex)
+                        val size = c.getLong(sizeIndex)
+                        selectedFileSize = if (size > 1024 * 1024) {
+                            "${String.format("%.1f", size / (1024f * 1024f))} MB"
+                        } else {
+                            "${size / 1024} KB"
+                        }
+                    }
+                }
+
+                // Create a temporary file to pass to repository
+                val inputStream = context.contentResolver.openInputStream(it)
+                val tempFile = File(context.cacheDir, selectedFileName)
+                tempFile.outputStream().use { output ->
+                    inputStream?.copyTo(output)
+                }
+                selectedFile = tempFile
+            } catch (e: Exception) {
+                Toast.makeText(context, "Gagal memuat file: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
     
     var isScanning by remember { mutableStateOf(false) }
     var scanLogs = remember { mutableStateListOf<String>() }
@@ -1066,6 +1145,7 @@ fun ScamScreen(
 
                 Spacer(modifier = Modifier.height(20.dp))
 
+                // Jika tab URL aktif, tampilkan input URL, jika tab File aktif, tampilkan upload file area
                 if (activeTab == 0) {
                     // URL Scanner Input Area
                     Text(
@@ -1107,7 +1187,8 @@ fun ScamScreen(
                                     delay((250..550).random().toLong())
                                     scanLogs.add(log)
                                 }
-                                val res = repository.scanUrl(targetUrl)
+                                val finalUrl = if (!targetUrl.contains("://")) "https://$targetUrl" else targetUrl
+                                val res = repository.scanUrl(finalUrl)
                                 res.onSuccess {
                                     activeResult = it
                                     isScanning = false
@@ -1153,13 +1234,7 @@ fun ScamScreen(
                                 ), RoundedCornerShape(12.dp)
                             )
                             .clickable {
-                                // Simulate picking a dangerous APK file
-                                selectedFile = File("surat_undangan_pernikahan.apk")
-                                Toast.makeText(
-                                    context,
-                                    "File APK Dipilih (Mode Simulasi)!", 
-                                    Toast.LENGTH_SHORT
-                                ).show()
+                                filePickerLauncher.launch("*/*")
                             },
                         contentAlignment = Alignment.Center
                     ) {
@@ -1172,13 +1247,13 @@ fun ScamScreen(
                             )
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
-                                text = if (selectedFile != null) selectedFile!!.name else "Sentuh Untuk Memilih File",
+                                text = if (selectedFile != null) selectedFileName else "Sentuh Untuk Memilih File",
                                 color = TextWhite,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = if (selectedFile != null) "Ukuran: 6.4 MB" else "Format: PDF, APK, EXE, DOCX",
+                                text = if (selectedFile != null) "Ukuran: $selectedFileSize" else "Format: PDF, APK, EXE, DOCX",
                                 color = TextSteel,
                                 fontSize = 11.sp
                             )
@@ -1254,8 +1329,8 @@ fun ScamScreen(
             // Results views
             if (!isScanning && activeResult != null) {
                 val result = activeResult!!
-                val isVerdictDangerous = result.threatLevel == "dangerous"
-                val isVerdictWarning = result.threatLevel == "warning"
+                val isVerdictDangerous = result.dangerScore >= 50
+                val isVerdictWarning = result.dangerScore in 1..49
                 val verdictAccentColor = when {
                     isVerdictDangerous -> NeonRed
                     isVerdictWarning -> NeonGold
@@ -1348,7 +1423,7 @@ fun ScamScreen(
 
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text(text = "Rasio Deteksi:", color = TextSteel, fontSize = 12.sp)
-                            Text(text = "${result.maliciousCount} / ${result.totalEngines} antivirus", color = verdictAccentColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(text = "${result.flaggedEngineCount} / ${result.totalEngines} antivirus", color = verdictAccentColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                         Spacer(modifier = Modifier.height(6.dp))
 
@@ -1400,22 +1475,67 @@ fun ScamScreen(
                         .padding(12.dp)
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        result.detections.forEach { engine ->
+                        val detectedEngines = result.detections.filter {
+                            it.result != "clean" && it.result != "undetected"
+                        }.sortedByDescending {
+                            when (it.result) {
+                                "phishing", "malware" -> 3
+                                "suspicious" -> 2
+                                else -> 1
+                            }
+                        }
+
+                        val cleanEngines = result.detections.filter {
+                            it.result == "clean" || it.result == "undetected"
+                        }
+
+                        val enginesToShow = if (detectedEngines.isNotEmpty()) detectedEngines else cleanEngines
+
+                        // Label header
+                        if (detectedEngines.isNotEmpty()) {
+                            Text(
+                                text = "🚨 ${detectedEngines.size} MESIN MENDETEKSI ANCAMAN",
+                                color = NeonRed,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier.padding(bottom = 4.dp)
+                            )
+                        } else {
+                            Text(
+                                text = "SEMUA MESIN MELAPORKAN BERSIH",
+                                color = NeonGreen,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier.padding(bottom = 4.dp)
+                            )
+                        }
+
+                        enginesToShow.forEach { engine ->
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 6.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(text = engine.engine, color = TextWhite, fontSize = 13.sp)
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(text = engine.engine, color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    if (engine.category.isNotEmpty() && engine.category != "harmless" && engine.category != "undetected") {
+                                        Text(text = engine.category, color = TextSteel, fontSize = 10.sp)
+                                    }
+                                }
                                 val badgeColor = when (engine.result) {
                                     "clean" -> NeonGreen
                                     "phishing", "malware" -> NeonRed
+                                    "suspicious" -> NeonGold
                                     else -> NeonGold
                                 }
                                 Text(
-                                    text = engine.result.uppercase(), 
-                                    color = badgeColor, 
-                                    fontSize = 11.sp, 
+                                    text = engine.result.uppercase(),
+                                    color = badgeColor,
+                                    fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
                                     fontFamily = FontFamily.Monospace
                                 )
@@ -1494,6 +1614,8 @@ fun HistoryScreen(
         it.title.lowercase().contains(searchQuery.lowercase())
     }
 
+    var selectedHistoryItem by remember { mutableStateOf<HistoryItem?>(null) }
+
     CyberScreenWrapper(title = "Riwayat Pemindaian") {
         Column(modifier = Modifier.fillMaxSize()) {
             // Search field
@@ -1568,12 +1690,7 @@ fun HistoryScreen(
                 ) {
                     items(filteredList) { item ->
                         HistoryRowItem(item = item, onClick = {
-                            // History detail modal dialog or notification toast
-                            Toast.makeText(
-                                context,
-                                "Membuka riwayat detail: ${item.title}", 
-                                Toast.LENGTH_SHORT
-                            ).show()
+                            selectedHistoryItem = item
                         })
                     }
                 }
@@ -1581,10 +1698,14 @@ fun HistoryScreen(
             Spacer(modifier = Modifier.height(80.dp))
         }
     }
+    
+    if (selectedHistoryItem != null) {
+        HistoryDetailDialog(item = selectedHistoryItem!!, onDismiss = { selectedHistoryItem = null })
+    }
 }
 
 /**
- * Shared History Row Row Item
+ * Shared History Row Item
  */
 @Composable
 fun HistoryRowItem(
@@ -1657,6 +1778,154 @@ fun HistoryRowItem(
                     fontSize = 9.sp,
                     fontWeight = FontWeight.Bold
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Detailed view for history items
+ */
+@Composable
+fun HistoryDetailDialog(
+    item: HistoryItem,
+    onDismiss: () -> Unit
+) {
+    val gson = remember { Gson() }
+    
+    val hoaxRes = remember(item) {
+        if (item.type == "hoax") {
+            try {
+                gson.fromJson(gson.toJson(item.resultDetails), HoaxResponse::class.java)
+            } catch (e: Exception) { null }
+        } else null
+    }
+    
+    val scamRes = remember(item) {
+        if (item.type == "scam") {
+            try {
+                gson.fromJson(gson.toJson(item.resultDetails), ScamResponse::class.java)
+            } catch (e: Exception) { null }
+        } else null
+    }
+    
+    Dialog(onDismissRequest = onDismiss) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.8f)
+                .clip(RoundedCornerShape(16.dp))
+                .background(ObsidianBg)
+                .border(1.dp, CardBorder, RoundedCornerShape(16.dp))
+                .padding(16.dp)
+        ) {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "DETAIL PEMINDAIAN",
+                        color = TextSteel,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(24.dp)) {
+                        Icon(imageVector = Icons.Default.Close, contentDescription = null, tint = TextSteel)
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                Text(
+                    text = item.title,
+                    color = TextWhite,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Cek ${item.type.uppercase()} • ${item.timestamp}",
+                    color = TextSteel,
+                    fontSize = 11.sp
+                )
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                val statusColor = when (item.status) {
+                    "safe" -> NeonGreen
+                    "warning", "neutral" -> NeonGold
+                    else -> NeonRed
+                }
+                
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(CardCarbon)
+                        .border(1.dp, statusColor.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                        .padding(16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "${item.score}%",
+                            color = statusColor,
+                            fontSize = 32.sp,
+                            fontWeight = FontWeight.Black
+                        )
+                        Text(
+                            text = if (item.type == "hoax") "TRUST SCORE" else "DANGER SCORE",
+                            color = TextSteel,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                if (item.type == "hoax") {
+                    if (hoaxRes != null) {
+                        Text(text = "Rangkuman Analisis", color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(text = hoaxRes.explanation, color = TextSteel, fontSize = 13.sp, lineHeight = 18.sp)
+                        
+                        if (hoaxRes.correctedFact.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(text = "Fakta Sebenarnya", color = NeonGreen, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            Text(text = hoaxRes.correctedFact, color = TextWhite, fontSize = 13.sp, lineHeight = 18.sp)
+                        }
+                    } else {
+                        Text(text = "Gagal memuat detail mendalam.", color = NeonRed, fontSize = 12.sp)
+                    }
+                } else {
+                    if (scamRes != null) {
+                        Text(text = "Mitigasi Keamanan", color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(text = scamRes.safetyAdvice, color = TextSteel, fontSize = 13.sp, lineHeight = 18.sp)
+                        
+                        if (scamRes.ipAddress != null) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(text = "Informasi Teknis", color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            Text(text = "IP: ${scamRes.ipAddress}", color = TextSteel, fontSize = 12.sp)
+                            Text(text = "Server: ${scamRes.hostCountry}", color = TextSteel, fontSize = 12.sp)
+                        }
+                    } else {
+                        Text(text = "Gagal memuat detail mendalam.", color = NeonRed, fontSize = 12.sp)
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(24.dp))
+                
+                Button(
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = CardBorder)
+                ) {
+                    Text(text = "TUTUP")
+                }
             }
         }
     }
@@ -1813,7 +2082,7 @@ fun ShareCardDialog(
                     Button(
                         onClick = {
                             val intent = Intent(Intent.ACTION_SEND).apply {
-                                type = "text/plain"
+                                this.type = "text/plain"
                                 putExtra(Intent.EXTRA_TEXT, shareText)
                             }
                             context.startActivity(Intent.createChooser(intent, "Bagikan Laporan Keamanan via"))

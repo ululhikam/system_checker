@@ -57,7 +57,7 @@ data class ScamResponse(
     @SerializedName("dangerScore") val dangerScore: Int, // 0-100
     @SerializedName("threatLevel") val threatLevel: String, // "safe", "warning", "dangerous"
     @SerializedName("totalEngines") val totalEngines: Int,
-    @SerializedName("maliciousCount") val maliciousCount: Int,
+    @SerializedName("flaggedEngineCount") val flaggedEngineCount: Int,
     @SerializedName("cleanCount") val cleanCount: Int,
     @SerializedName("ipAddress") val ipAddress: String?,
     @SerializedName("hostCountry") val hostCountry: String?,

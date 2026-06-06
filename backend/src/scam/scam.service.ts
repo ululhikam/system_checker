@@ -9,9 +9,10 @@ import * as dns from 'dns';
 import { promisify } from 'util';
 
 const resolve4 = promisify(dns.resolve4);
+const resolve6 = promisify(dns.resolve6);
 
 export class UrlScanRequest {
-  url: string;
+  url: string = '';
   enableWebScraping?: boolean;
 }
 
@@ -27,7 +28,7 @@ interface VtScanData {
 
 interface VtEngineResult {
   category?: string;
-  result?: string;
+  result?: string; // This field is not always present in VirusTotal API
 }
 
 interface VtFileReportData {
@@ -49,7 +50,7 @@ export interface ScamScanResult {
   dangerScore: number; // 0-100
   threatLevel: 'safe' | 'warning' | 'dangerous';
   totalEngines: number;
-  maliciousCount: number;
+  flaggedEngineCount: number;
   cleanCount: number;
   ipAddress?: string | null;
   hostCountry?: string | null;
@@ -79,8 +80,19 @@ export class ScamService {
       domain = domain.split('/')[0].split(':')[0];
 
       this.logger.log(`Performing DNS lookup for domain: ${domain}`);
-      const ips = await resolve4(domain);
-      const ip = ips[0] || null;
+      let ip: string | null = null;
+
+      try {
+        const ipv4 = await resolve4(domain);
+        ip = ipv4[0] || null;
+      } catch {
+        try {
+          const ipv6 = await resolve6(domain);
+          ip = ipv6[0] || null;
+        } catch {
+          ip = null;
+        }
+      }
       if (!ip) return { ip: null, country: null };
 
       try {
@@ -175,7 +187,7 @@ export class ScamService {
     let htmlContent = '';
     try {
       const scrapeRes = await axios.get(targetUrl, {
-        timeout: 6000,
+        timeout: 10000,
         headers: {
           'User-Agent':
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
@@ -233,7 +245,7 @@ Kembalikan hasil analisis Anda dalam format JSON valid tanpa embel-embel markdow
               contents: [{ parts: [{ text: prompt }] }],
               generationConfig: { responseMimeType: 'application/json' },
             },
-            { timeout: 10000 },
+            { timeout: 20000 },
           );
           break;
         } catch (err: any) {
@@ -252,13 +264,17 @@ Kembalikan hasil analisis Anda dalam format JSON valid tanpa embel-embel markdow
 
       const rawText =
         llmResponse.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      return JSON.parse(rawText.trim()) as {
-        isPhishing: boolean;
-        confidenceScore: number;
-        detectedThreats: string[];
-        aiVerdictExplanation: string;
-        safetyAdviceText: string;
-      };
+      try {
+        return JSON.parse(rawText.trim()) as {
+          isPhishing: boolean;
+          confidenceScore: number;
+          detectedThreats: string[];
+          aiVerdictExplanation: string;
+          safetyAdviceText: string;
+        };
+      } catch {
+        return null;
+      }
     } catch (err: any) {
       this.logger.error(`AI Web-Scraping Gemini query failed: ${err.message}`);
       return null;
@@ -337,6 +353,7 @@ Kembalikan hasil analisis Anda dalam format JSON valid tanpa embel-embel markdow
       lowUrl.includes('tinyurl.com') ||
       lowUrl.includes('t.co');
     if (isShortener) {
+      dangerScore += 10;
       triggers.push('URL Shortener redirection mask');
     }
 
@@ -344,7 +361,7 @@ Kembalikan hasil analisis Anda dalam format JSON valid tanpa embel-embel markdow
 
     let threatLevel: 'safe' | 'warning' | 'dangerous' = 'safe';
     if (dangerScore > 50) threatLevel = 'dangerous';
-    else if (dangerScore > 15) threatLevel = 'warning';
+    else if (dangerScore > 0) threatLevel = 'warning';
 
     // Mock realistic engines
     const engines = [
@@ -355,8 +372,12 @@ Kembalikan hasil analisis Anda dalam format JSON valid tanpa embel-embel markdow
       'OpenPhish',
       'WebOfTrust',
     ];
-    const detections = engines.map((engine) => {
-      const isTriggered = triggers.length > 0 && Math.random() > 0.6;
+    
+    const allDetections = engines.map((engine, index) => {
+      const isTriggered =
+        triggers.length > 0 &&
+        index < Math.min(triggers.length, engines.length);
+
       return {
         engine,
         category: isTriggered ? 'malicious' : 'harmless',
@@ -364,7 +385,13 @@ Kembalikan hasil analisis Anda dalam format JSON valid tanpa embel-embel markdow
       };
     });
 
-    const maliciousCount = detections.filter(
+    // Prioritize malicious detections first, then show clean ones
+    const detections = [
+      ...allDetections.filter((d) => d.result === 'phishing'),
+      ...allDetections.filter((d) => d.result === 'clean'),
+    ];
+
+    const flaggedEngineCount = detections.filter(
       (d) => d.result !== 'clean',
     ).length;
 
@@ -383,8 +410,8 @@ Kembalikan hasil analisis Anda dalam format JSON valid tanpa embel-embel markdow
       dangerScore,
       threatLevel,
       totalEngines: engines.length,
-      maliciousCount,
-      cleanCount: engines.length - maliciousCount,
+      flaggedEngineCount: flaggedEngineCount,
+      cleanCount: engines.length - flaggedEngineCount,
       ipAddress: ip,
       hostCountry: country,
       reputationPoints: 100 - dangerScore,
@@ -411,7 +438,7 @@ Kembalikan hasil analisis Anda dalam format JSON valid tanpa embel-embel markdow
       dangerScore = 40;
       triggers.push('Android Application Package (APK) sideloading');
       if (payload.fileSize < 1024 * 1024 * 3) {
-        dangerScore += 35; // Suspiciously small APK
+        dangerScore += 35;
         triggers.push(
           'Suspiciously small package size (potential SMS Stealer stub)',
         );
@@ -443,13 +470,27 @@ Kembalikan hasil analisis Anda dalam format JSON valid tanpa embel-embel markdow
         dangerScore = 25;
         triggers.push('Document pretending to be official billing/invoice');
       }
+    } else if (
+      lowName.endsWith('.py') ||
+      lowName.endsWith('.sh') ||
+      lowName.endsWith('.js') ||
+      lowName.endsWith('.rb') ||
+      lowName.endsWith('.pl') ||
+      lowName.endsWith('.vbs')
+    ) {
+      dangerScore = 35;
+      triggers.push('Executable script file (potential remote code execution risk)');
+      if (payload.fileSize < 1024 * 100) {
+        dangerScore += 20;
+        triggers.push('Suspiciously compact script (may contain obfuscated code)');
+      }
     }
 
     dangerScore = Math.min(100, dangerScore);
 
     let threatLevel: 'safe' | 'warning' | 'dangerous' = 'safe';
     if (dangerScore > 50) threatLevel = 'dangerous';
-    else if (dangerScore > 15) threatLevel = 'warning';
+    else if (dangerScore > 0) threatLevel = 'warning';
 
     const engines = [
       'Signature Analyzer',
@@ -458,8 +499,13 @@ Kembalikan hasil analisis Anda dalam format JSON valid tanpa embel-embel markdow
       'Local Sandboxing',
       'Heuristics File Core',
     ];
-    const detections = engines.map((engine) => {
-      const isTriggered = triggers.length > 0 && Math.random() > 0.5;
+    
+    // Sort detections to prioritize malicious/suspicious ones
+    const allDetections = engines.map((engine, index) => {
+      const isTriggered =
+        triggers.length > 0 &&
+        index < Math.min(triggers.length, engines.length);
+
       return {
         engine,
         category: isTriggered ? 'malicious' : 'harmless',
@@ -467,7 +513,13 @@ Kembalikan hasil analisis Anda dalam format JSON valid tanpa embel-embel markdow
       };
     });
 
-    const maliciousCount = detections.filter(
+    // Prioritize malicious detections first, then show clean ones
+    const detections = [
+      ...allDetections.filter((d) => d.result === 'malware'),
+      ...allDetections.filter((d) => d.result === 'clean'),
+    ];
+
+    const flaggedEngineCount = detections.filter(
       (d) => d.result !== 'clean',
     ).length;
 
@@ -486,8 +538,8 @@ Kembalikan hasil analisis Anda dalam format JSON valid tanpa embel-embel markdow
       dangerScore,
       threatLevel,
       totalEngines: engines.length,
-      maliciousCount,
-      cleanCount: engines.length - maliciousCount,
+      flaggedEngineCount: flaggedEngineCount,
+      cleanCount: engines.length - flaggedEngineCount,
       ipAddress: null,
       hostCountry: null,
       reputationPoints: 100 - dangerScore,
@@ -497,22 +549,30 @@ Kembalikan hasil analisis Anda dalam format JSON valid tanpa embel-embel markdow
     };
   }
 
+  private sanitizeUrl(url: string): string {
+    let sanitized = url.trim();
+    if (sanitized && !sanitized.includes('://')) {
+      sanitized = 'https://' + sanitized;
+    }
+    return sanitized;
+  }
+
   private async getRawScanUrl(
     payload: UrlScanRequest,
   ): Promise<ScamScanResult> {
-    const targetUrl = payload.url;
+    const targetUrl = this.sanitizeUrl(payload.url);
     this.logger.log(`Scanning URL: ${targetUrl}`);
 
     const vtKey = process.env.VIRUSTOTAL_API_KEY;
     const isVtKeyMissing =
-      !vtKey || vtKey === 'your_virustotal_api_key_here' || vtKey.trim() === '';
+      !vtKey || vtKey === 'your_virustotal_api_key' || vtKey.trim() === '';
 
     if (isVtKeyMissing) {
       return this.localFallbackScanUrl(targetUrl);
     }
 
     try {
-      // 1. Try to fetch existing report from VirusTotal URLs endpoint using base64 URL ID
+      // 1. Coba dapatkan laporan langsung (cached) dari VirusTotal menggunakan URL ID (base64 dari URL)
       const urlId = Buffer.from(targetUrl)
         .toString('base64')
         .replace(/=/g, '')
@@ -544,10 +604,10 @@ Kembalikan hasil analisis Anda dalam format JSON valid tanpa embel-embel markdow
           );
           const analysisId = scanRes.data.data.id;
 
-          // Poll for completion (up to 3 times with 1.5s delay)
+          // Polling loop untuk menunggu hasil analisis selesai, maksimal 8 kali dengan interval 2.5 detik (total 20 detik)
           let pollAttempts = 0;
-          while (pollAttempts < 3) {
-            await new Promise((resolve) => setTimeout(resolve, 1500));
+          while (pollAttempts < 8) {
+            await new Promise((resolve) => setTimeout(resolve, 2500));
             const pollRes = await axios.get(
               `https://www.virustotal.com/api/v3/analyses/${analysisId}`,
               { headers: { 'x-apikey': vtKey } },
@@ -559,7 +619,7 @@ Kembalikan hasil analisis Anda dalam format JSON valid tanpa embel-embel markdow
             pollAttempts++;
           }
 
-          // If still not completed, fallback to whatever is in the analysis
+          // Jika setelah polling tetap tidak selesai, coba sekali lagi untuk mendapatkan laporan final (mungkin sudah selesai tapi belum terupdate statusnya)
           if (!reportData) {
             const finalRes = await axios.get(
               `https://www.virustotal.com/api/v3/analyses/${analysisId}`,
@@ -574,8 +634,7 @@ Kembalikan hasil analisis Anda dalam format JSON valid tanpa embel-embel markdow
 
       const attributes = reportData.attributes;
       const stats = attributes.last_analysis_stats || attributes.stats || {};
-      const results =
-        attributes.last_analysis_results || attributes.results || {};
+      const results = attributes.last_analysis_results || attributes.results || {};
 
       const malicious = stats.malicious || 0;
       const suspicious = stats.suspicious || 0;
@@ -586,31 +645,79 @@ Kembalikan hasil analisis Anda dalam format JSON valid tanpa embel-embel markdow
         100,
         Math.round(((malicious + suspicious * 0.5) / total) * 100),
       );
+
       let threatLevel: 'safe' | 'warning' | 'dangerous' = 'safe';
       if (dangerScore > 50) threatLevel = 'dangerous';
-      else if (dangerScore > 10) threatLevel = 'warning';
+      else if (dangerScore > 0) threatLevel = 'warning';
 
-      const detections: ScamScanResult['detections'] = Object.entries(results)
-        .slice(0, 15)
-        .map(([engine, details]: [string, VtEngineResult]) => ({
+      const allDetections = Object.entries(results).map(([engine, details]) => {
+        const vtCategory = (details as VtEngineResult)?.category ?? "undetected";
+        const vtResult = ((details as VtEngineResult)?.result ?? "").toLowerCase();
+        const category = vtCategory.toLowerCase();
+
+        let detectionType: "clean" | "phishing" | "malware" | "suspicious";
+
+        // Prioritas berdasarkan category VirusTotal
+        if (category === "malicious") {
+          detectionType = "phishing";
+        } else if (category === "suspicious") {
+          detectionType = "suspicious";
+        }
+        // Analisis berdasarkan nama deteksi
+        else if (
+          ["phish", "fraud", "scam"].some(keyword =>
+            vtResult.includes(keyword)
+          )
+        ) {
+          detectionType = "phishing";
+        } else if (
+          [
+            "trojan",
+            "malware",
+            "virus",
+            "ransomware",
+            "backdoor",
+            "spyware",
+            "worm",
+            "exploit",
+          ].some(keyword => vtResult.includes(keyword))
+        ) {
+          detectionType = "malware";
+        } else if (
+          ["suspicious", "adware", "riskware", "pup"].some(keyword =>
+            vtResult.includes(keyword)
+          )
+        ) {
+          detectionType = "suspicious";
+        } else {
+          detectionType = "clean";
+        }
+
+        return {
           engine,
-          category: details.category || 'harmless',
-          result:
-            details.result === 'malicious'
-              ? 'malware'
-              : details.result === 'suspicious'
-                ? 'suspicious'
-                : details.result === 'phishing'
-                  ? 'phishing'
-                  : 'clean',
-        }));
+          category: vtCategory,
+          result: detectionType,
+        };
+      });
 
-      // Highly Optimized and Precise Safety Advice
+      // Prioritize malicious/suspicious detections first, then show clean ones
+      const detections: ScamScanResult['detections'] = [
+        ...allDetections.filter(
+          (d) =>
+            d.result === 'malware' || d.result === 'suspicious' || d.result === 'phishing',
+        ),
+        ...allDetections.filter((d) => d.result === 'clean'),
+      ].slice(0, 50);
+
+      const flaggedEngineCount = detections.filter(
+        (d) => d.result !== 'clean',
+      ).length;
+
       let safetyAdvice = '';
       if (dangerScore > 50) {
-        safetyAdvice = `🚨 ANCAMAN TINGGI SANGAT BERBAHAYA! Tautan "${targetUrl}" teridentifikasi kuat sebagai halaman phishing aktif atau malware gateway. Terdeteksi secara konsisten oleh ${malicious} vendor antivirus ternama (seperti Kaspersky/Symantec). Jangan pernah memasukkan nama pengguna, sandi, nomor HP, atau kode OTP perbankan Anda di situs ini!`;
-      } else if (dangerScore > 15) {
-        safetyAdvice = `⚠️ PERINGATAN KEAMANAN! Tautan "${targetUrl}" ditandai mencurigakan oleh ${malicious} vendor keamanan global. Tautan ini mungkin menggunakan domain murah gratisan (seperti .xyz, .site, .vip, .click) atau memanipulasi parameter URL untuk mengelabui filter browser. Selalu verifikasi ulang keaslian alamat domain utama sebelum melanjutkan.`;
+        safetyAdvice = `🚨 ANCAMAN TINGGI SANGAT BERBAHAYA! Tautan "${targetUrl}" teridentifikasi kuat sebagai halaman phishing aktif atau malware gateway. Terdeteksi secara konsisten oleh ${flaggedEngineCount} vendor antivirus ternama (seperti Kaspersky/Symantec). Jangan pernah memasukkan nama pengguna, sandi, nomor HP, atau kode OTP perbankan Anda di situs ini!`;
+      } else if (dangerScore > 0) {
+        safetyAdvice = `⚠️ PERINGATAN KEAMANAN! Tautan "${targetUrl}" ditandai mencurigakan oleh ${flaggedEngineCount} vendor keamanan global. Tautan ini mungkin menggunakan domain murah gratisan (seperti .xyz, .site, .vip, .click) atau memanipulasi parameter URL untuk mengelabui filter browser. Selalu verifikasi ulang keaslian alamat domain utama sebelum melanjutkan.`;
       } else {
         const lowUrl = targetUrl.toLowerCase();
         if (
@@ -619,9 +726,9 @@ Kembalikan hasil analisis Anda dalam format JSON valid tanpa embel-embel markdow
           lowUrl.includes('tinyurl.com') ||
           lowUrl.includes('t.co')
         ) {
-          safetyAdvice = `⚠️ WASPADA PENYAMARAN URL SHORTENER! Meskipun seluruh 92 vendor menilai tautan ini bersih (Danger Score: 0%), tautan ini menggunakan penyingkat URL (URL Shortener) yang menyembunyikan alamat domain tujuan akhir Anda secara misterius. Berhati-hatilah sebelum menginput informasi apa pun di situs tujuan akhir.`;
+          safetyAdvice = `⚠️ WASPADA PENYAMARAN URL SHORTENER! Meskipun seluruh ${total} vendor menilai tautan ini bersih (Danger Score: ${dangerScore}%), tautan ini menggunakan penyingkat URL (URL Shortener) yang menyembunyikan alamat domain tujuan akhir Anda secara misterius. Berhati-hatilah sebelum menginput informasi apa pun di situs tujuan akhir.`;
         } else {
-          safetyAdvice = `✅ BERSIH / AMAN! Domain "${targetUrl}" telah diverifikasi oleh 92 vendor antivirus global (termasuk ESET, Bitdefender, Symantec, dan Kaspersky) dan dinyatakan 100% bebas dari segala jenis ancaman phishing, scamming, adware, maupun spyware.`;
+          safetyAdvice = `✅ AMAN / BERSIH! Domain "${targetUrl}" telah diverifikasi oleh ${total} vendor antivirus global (termasuk ESET, Bitdefender, Symantec, dan Kaspersky) dan dinyatakan 100% bebas dari segala jenis ancaman phishing, scamming, adware, maupun spyware (Danger Score: ${dangerScore}%).`;
         }
       }
 
@@ -634,10 +741,10 @@ Kembalikan hasil analisis Anda dalam format JSON valid tanpa embel-embel markdow
         dangerScore,
         threatLevel,
         totalEngines: total,
-        maliciousCount: malicious,
+        flaggedEngineCount: malicious + suspicious,
         cleanCount: clean,
-        ipAddress: ip || '104.244.42.1', // Fallback to safe mock if DNS failed
-        hostCountry: country || 'United States',
+        ipAddress: ip,
+        hostCountry: country ?? 'Unknown',
         reputationPoints: 100 - dangerScore,
         detections,
         safetyAdvice,
@@ -653,7 +760,20 @@ Kembalikan hasil analisis Anda dalam format JSON valid tanpa embel-embel markdow
     }
   }
 
+  private isValidUrl(url: string): boolean {
+    try {
+      new URL(url);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async scanUrl(payload: UrlScanRequest): Promise<ScamScanResult> {
+    payload.url = this.sanitizeUrl(payload.url);
+    if (!this.isValidUrl(payload.url)) {
+      throw new Error('Invalid URL format');
+    }
     const baseResult = await this.getRawScanUrl(payload);
 
     if (payload.enableWebScraping) {
@@ -664,15 +784,18 @@ Kembalikan hasil analisis Anda dalam format JSON valid tanpa embel-embel markdow
         );
 
         if (aiResult.isPhishing) {
-          baseResult.dangerScore = Math.max(
-            baseResult.dangerScore,
-            aiResult.confidenceScore,
+          baseResult.dangerScore = Math.round(
+            baseResult.dangerScore * 0.7 +
+            aiResult.confidenceScore * 0.3,
           );
           baseResult.threatLevel =
             baseResult.dangerScore > 50 ? 'dangerous' : 'warning';
         } else {
           if (baseResult.dangerScore < 75) {
-            baseResult.dangerScore = Math.max(0, baseResult.dangerScore - 15);
+            baseResult.dangerScore = Math.max(
+              0,
+              Math.round(baseResult.dangerScore * 0.85),
+            );
           }
         }
         baseResult.reputationPoints = 100 - baseResult.dangerScore;
@@ -685,7 +808,7 @@ Kembalikan hasil analisis Anda dalam format JSON valid tanpa embel-embel markdow
 
         baseResult.totalEngines += 1;
         if (aiResult.isPhishing) {
-          baseResult.maliciousCount += 1;
+          baseResult.flaggedEngineCount += 1;
         } else {
           baseResult.cleanCount += 1;
         }
@@ -710,9 +833,16 @@ Kembalikan hasil analisis Anda dalam format JSON valid tanpa embel-embel markdow
       : Buffer.from('');
     const sha256 = crypto.createHash('sha256').update(fileBuffer).digest('hex');
 
+    const maxFileSize = 32 * 1024 * 1024;
     const vtKey = process.env.VIRUSTOTAL_API_KEY;
     const isVtKeyMissing =
-      !vtKey || vtKey === 'your_virustotal_api_key_here' || vtKey.trim() === '';
+      !vtKey || vtKey === 'your_virustotal_api_key' || vtKey.trim() === '';
+
+    if (payload.fileSize > maxFileSize) {
+      throw new Error(
+        `File exceeds maximum supported size (32 MB)`,
+      );
+    }
 
     if (isVtKeyMissing) {
       return this.localFallbackScanFile(payload, sha256);
@@ -808,34 +938,91 @@ Kembalikan hasil analisis Anda dalam format JSON valid tanpa embel-embel markdow
         100,
         Math.round(((malicious + suspicious * 0.5) / total) * 100),
       );
+
       let threatLevel: 'safe' | 'warning' | 'dangerous' = 'safe';
       if (dangerScore > 50) threatLevel = 'dangerous';
-      else if (dangerScore > 10) threatLevel = 'warning';
+      else if (dangerScore > 0) threatLevel = 'warning';
 
-      const detections: ScamScanResult['detections'] = Object.entries(results)
-        .slice(0, 15)
-        .map(([engine, details]: [string, VtEngineResult]) => ({
-          engine,
-          category: details.category || 'harmless',
-          result:
-            details.result === 'malicious'
-              ? 'malware'
-              : details.result === 'suspicious'
-                ? 'suspicious'
-                : 'clean',
-        }));
+      const allDetections = Object.entries(results).map(
+        ([engine, details]) => {
+          const vtCategory = (details as VtEngineResult)?.category || 'undetected';
+          const vtResult = ((details as VtEngineResult)?.result || '').toLowerCase();
+          const lowCategory = vtCategory.toLowerCase();
+
+          let detectionType: 'clean' | 'malware' | 'suspicious' = 'clean';
+
+          // Cek category 'malicious' dari VT → malware
+          if (lowCategory === 'malicious') {
+            detectionType = 'malware';
+          }
+          // Cek category 'suspicious' dari VT
+          else if (lowCategory === 'suspicious') {
+            detectionType = 'suspicious';
+          }
+          // Tambahan: cek nama malware spesifik dari field result
+          else if (
+            vtResult.includes('trojan') ||
+            vtResult.includes('malware') ||
+            vtResult.includes('virus') ||
+            vtResult.includes('ransomware') ||
+            vtResult.includes('backdoor') ||
+            vtResult.includes('spyware') ||
+            vtResult.includes('worm') ||
+            vtResult.includes('rootkit') ||
+            vtResult.includes('exploit') ||
+            vtResult.includes('keylogger') ||
+            vtResult.includes('cryptominer') ||
+            vtResult.includes('botnet')
+          ) {
+            detectionType = 'malware';
+          }
+          else if (
+            vtResult.includes('suspicious') ||
+            vtResult.includes('adware') ||
+            vtResult.includes('riskware') ||
+            vtResult.includes('grayware') ||
+            vtResult.includes('pup') ||
+            vtResult.includes('scam')
+          ) {
+            detectionType = 'suspicious';
+          }
+          // Harmless / undetected / clean
+          else {
+            detectionType = 'clean';
+          }
+
+          return {
+            engine,
+            category: vtCategory,
+            result: detectionType,
+          };
+        },
+      );
+
+      // Prioritize malicious/suspicious detections first, then show clean ones
+      const detections: ScamScanResult['detections'] = [
+        ...allDetections.filter(
+          (d) =>
+            d.result === 'malware' || d.result === 'suspicious',
+        ),
+        ...allDetections.filter((d) => d.result === 'clean'),
+      ].slice(0, 15);
+
+      const flaggedEngineCount = detections.filter(
+        (d) => d.result !== 'clean',
+      ).length;
 
       // Highly Optimized and Precise File Safety Advice
       let safetyAdvice = '';
       if (dangerScore > 50) {
         safetyAdvice = `🚨 FILE MALWARE SANGAT BERBAHAYA! File "${fileName}" (${(payload.fileSize / (1024 * 1024)).toFixed(2)} MB) terdeteksi positif sebagai ancaman aktif (seperti SMS Stealer, Trojan Bank, atau Ransomware) oleh ${malicious} vendor antivirus. Jangan pernah membuka, memasang, atau mengekstrak file ini di perangkat Anda!`;
-      } else if (dangerScore > 15) {
-        safetyAdvice = `⚠️ PERINGATAN ANCAMAN FILE! File "${fileName}" ditandai mencurigakan oleh ${malicious} vendor keamanan. Harap waspada penuh apabila file ini diunduh dari situs pihak ketiga ilegal, karena berisiko tinggi membawa muatan berbahaya tersembunyi yang merusak sistem.`;
+      } else if (dangerScore > 0) {
+        safetyAdvice = `⚠️ PERINGATAN ANCAMAN FILE! File "${fileName}" ditandai mencurigakan oleh ${flaggedEngineCount} vendor keamanan. Harap waspada penuh apabila file ini diunduh dari situs pihak ketiga ilegal, karena berisiko tinggi membawa muatan berbahaya tersembunyi yang merusak sistem.`;
       } else {
         if (fileName.toLowerCase().endsWith('.apk')) {
-          safetyAdvice = `⚠️ WASPADA PEMASANGAN APLIKASI EKSTERNAL! File APK "${fileName}" dinilai 100% bebas dari ancaman virus, trojan, maupun spyware. Namun, memasang aplikasi dari luar Google Play Store (sideloading) tetap memiliki risiko laten terhadap keamanan data pribadi perangkat Anda.`;
+          safetyAdvice = `⚠️ WASPADA PEMASANGAN APLIKASI EKSTERNAL! File "${fileName}" dinilai bebas dari ancaman virus, trojan, maupun spyware oleh ${total} vendor (Danger Score: ${dangerScore}%). Namun, memasang aplikasi dari luar Google Play Store (sideloading) tetap memiliki risiko laten terhadap keamanan data pribadi perangkat Anda.`;
         } else {
-          safetyAdvice = `✅ AMAN / BERSIH! File "${fileName}" (${(payload.fileSize / (1024 * 1024)).toFixed(2)} MB) telah dipindai terhadap database ancaman global. Seluruh vendor antivirus menyatakan berkas ini bersih dan aman dari infeksi malware atau ransomware.`;
+          safetyAdvice = `✅ AMAN / BERSIH! File "${fileName}" telah dipindai terhadap ${total} database ancaman global. Seluruh vendor antivirus menyatakan berkas ini bersih dan aman dari infeksi malware atau ransomware (Danger Score: ${dangerScore}%).`;
         }
       }
 
@@ -845,7 +1032,7 @@ Kembalikan hasil analisis Anda dalam format JSON valid tanpa embel-embel markdow
         dangerScore,
         threatLevel,
         totalEngines: total,
-        maliciousCount: malicious,
+        flaggedEngineCount: malicious + suspicious,
         cleanCount: clean,
         ipAddress: null,
         hostCountry: null,

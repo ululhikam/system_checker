@@ -22,6 +22,6 @@ async function bootstrap() {
   // Listen on port 3000 on all interfaces
   const port = process.env.PORT ?? 3000;
   await app.listen(port, '0.0.0.0');
-  console.log(`🚀 Checker BFF Backend running on: http://0.0.0.0:${port}/api`);
+  console.log(`Checker BFF Backend running on: http://0.0.0.0:${port}/api`);
 }
 bootstrap();

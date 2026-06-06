@@ -35,7 +35,7 @@ class ClipboardMonitorService : Service() {
 
         fun startService(context: Context) {
             val intent = Intent(context, ClipboardMonitorService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 context.startForegroundService(intent)
             } else {
                 context.startService(intent)
@@ -160,7 +160,7 @@ class ClipboardMonitorService : Service() {
     }
 
     private fun createNotificationChannels() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val foregroundChannel = NotificationChannel(
                 FOREGROUND_CHANNEL_ID,
                 "Cyber Shield Active Protection",
