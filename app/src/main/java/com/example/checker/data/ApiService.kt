@@ -30,9 +30,6 @@ interface CheckerApiService {
 object NetworkClient {
     private const val BASE_URL = "https://checker-ruddy-seven.vercel.app/api/"
 
-    // buat testing di lokal, pakai localhost emulator atau hp sendiri dengan IP lokal
-//    private const val BASE_URL = "http://10.0.2.2:3000/api/" -> contoh untuk emulator
-
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)

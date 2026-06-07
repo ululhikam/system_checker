@@ -31,13 +31,16 @@
             </intent-filter>
         </activity>
 
-        <!-- Background Clipboard Protection Shield Service -->
+        <!-- Real-Time Notification Monitoring Service -->
         <service
-            android:name=".service.ClipboardMonitorService"
+            android:name=".service.NotificationMonitorService"
             android:enabled="true"
-            android:exported="false"
-            android:foregroundServiceType="specialUse"
-            tools:targetApi="34" />
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
             
     </application>
 

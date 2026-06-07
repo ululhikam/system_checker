@@ -156,15 +156,15 @@ export class HoaxService {
 
     const isGoogleKeyMissing =
       !googleApiKey ||
-      googleApiKey === 'your_google_fact_check_api_key_here' ||
+      googleApiKey === 'your_google_fact_check_api' ||
       googleApiKey.trim() === '';
     const isGeminiKeyMissing =
       !geminiKey ||
-      geminiKey === 'your_gemini_api_key_here' ||
+      geminiKey === 'your_gemini_api_key' ||
       geminiKey.trim() === '';
     const isDeepseekKeyMissing =
       !deepseekKey ||
-      deepseekKey === 'your_deepseek_api_key_here' ||
+      deepseekKey === 'your_deepseek_api_key' ||
       deepseekKey.trim() === '';
 
     if (isGoogleKeyMissing) {
@@ -435,7 +435,7 @@ FORMAT BALASAN (WAJIB JSON MURNI TANPA EMBEL-EMBEL MARKDOWN):
         while (retries > 0) {
           try {
             llmResponse = await axios.post(
-              // pakai 'https://api.deepseek.com/v1/chat/completions' jika sudah pakai API Key yang dibuat dari deepseek (resmi) langsung
+              // pakai 'https://api.deepseek.com/v1/chat/completions' jika ingin pakai API Key yang dibuat dari deepseek (resmi) langsung
               'https://openrouter.ai/api/v1/chat/completions',
                 {
                   model: 'deepseek-v4-flash',

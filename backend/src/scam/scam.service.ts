@@ -174,7 +174,7 @@ export class ScamService {
     const geminiKey = process.env.GEMINI_API_KEY;
     if (
       !geminiKey ||
-      geminiKey === 'your_gemini_api_key_here' ||
+      geminiKey === 'your_gemini_api_key' ||
       geminiKey.trim() === ''
     ) {
       this.logger.warn(
@@ -604,10 +604,10 @@ Kembalikan hasil analisis Anda dalam format JSON valid tanpa embel-embel markdow
           );
           const analysisId = scanRes.data.data.id;
 
-          // Polling loop untuk menunggu hasil analisis selesai, maksimal 8 kali dengan interval 2.5 detik (total 20 detik)
+          // Polling loop untuk menunggu hasil analisis selesai, maksimal 12 kali dengan interval 3 detik (total 36 detik)
           let pollAttempts = 0;
-          while (pollAttempts < 8) {
-            await new Promise((resolve) => setTimeout(resolve, 2500));
+          while (pollAttempts < 12) {
+            await new Promise((resolve) => setTimeout(resolve, 3000));
             const pollRes = await axios.get(
               `https://www.virustotal.com/api/v3/analyses/${analysisId}`,
               { headers: { 'x-apikey': vtKey } },
@@ -885,11 +885,11 @@ Kembalikan hasil analisis Anda dalam format JSON valid tanpa embel-embel markdow
           );
           const analysisId = uploadRes.data.data.id;
 
-          // Poll for completion (up to 5 times with 2s delay)
+          // Poll for completion (up to 15 times with 4s delay = 60s total)
           let attempts = 0;
           let completedReport: VtFileReportData | null = null;
-          while (attempts < 5) {
-            await new Promise((resolve) => setTimeout(resolve, 2000));
+          while (attempts < 15) {
+            await new Promise((resolve) => setTimeout(resolve, 4000));
             const pollRes = await axios.get(
               `https://www.virustotal.com/api/v3/analyses/${analysisId}`,
               { headers: { 'x-apikey': vtKey } },

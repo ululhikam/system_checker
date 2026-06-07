@@ -15,8 +15,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.outlined.CheckCircle
-import androidx.compose.material.icons.outlined.Warning
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.NotificationsNone
 import androidx.compose.material3.*
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
@@ -25,7 +25,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -38,7 +37,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.navigation.NavController
 import com.example.checker.data.*
-import com.example.checker.service.ClipboardMonitorService
+import com.example.checker.service.NotificationMonitorService
 import com.example.checker.ui.components.*
 import com.example.checker.ui.theme.*
 import com.google.mlkit.vision.common.InputImage
@@ -115,7 +114,19 @@ fun DashboardScreen(
     val context = LocalContext.current
     val historyList by repository.historyList.collectAsState()
     
-    var isShieldActive by remember { mutableStateOf(ClipboardMonitorService.isServiceRunning) }
+    var isAutoScanEnabled by remember { mutableStateOf(repository.isAutoScanEnabled()) }
+    var isServiceActive by remember { mutableStateOf(false) }
+    var isPermissionGranted by remember { mutableStateOf(false) }
+
+    // Check service status and preference
+    LaunchedEffect(Unit) {
+        while(true) {
+            isServiceActive = NotificationMonitorService.isServiceRunning
+            isPermissionGranted = NotificationMonitorService.isEnabled(context)
+            isAutoScanEnabled = repository.isAutoScanEnabled()
+            delay(1000)
+        }
+    }
 
     val safeItemsCount = historyList.count { it.status == "safe" }
     val warningItemsCount = historyList.count { it.status == "warning" || it.status == "neutral" }
@@ -156,12 +167,12 @@ fun DashboardScreen(
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(4.dp))
-                                .background(if (isShieldActive) NeonGreen.copy(alpha = 0.2f) else CardBorder)
+                                .background(if (isServiceActive) NeonGreen.copy(alpha = 0.2f) else CardBorder)
                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                         ) {
                             Text(
-                                text = if (isShieldActive) "ACTIVE" else "SECURE",
-                                color = if (isShieldActive) NeonGreen else TextSteel,
+                                text = if (isServiceActive) "LISTENING" else "SECURE",
+                                color = if (isServiceActive) NeonGreen else TextSteel,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold
                             )
@@ -169,13 +180,13 @@ fun DashboardScreen(
                     }
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        text = "Anti-Hoax & Cyber Guard",
+                        text = "Notification Guard",
                         color = TextWhite,
                         fontSize = 22.sp,
                         fontWeight = FontWeight.Black
                     )
                     Text(
-                        text = "Pemantau clipboard background melindungi ponsel Anda dari penyebaran hoax dan phising secara otomatis.",
+                        text = "Memantau notifikasi real-time untuk mendeteksi link phising dan berita hoaks secara otomatis.",
                         color = TextSteel,
                         fontSize = 13.sp,
                         lineHeight = 18.sp,
@@ -183,7 +194,32 @@ fun DashboardScreen(
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     
-                    // Clipboard Service Toggle
+                    // Permission Indicator
+                    if (!isPermissionGranted) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(NeonRed.copy(alpha = 0.1f))
+                                .border(1.dp, NeonRed.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                                .clickable {
+                                    context.startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
+                                }
+                                .padding(12.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Error, null, tint = NeonRed, modifier = Modifier.size(20.dp))
+                                Spacer(Modifier.width(12.dp))
+                                Column {
+                                    Text("Izin Akses Notifikasi Diperlukan", color = NeonRed, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    Text("Klik di sini untuk mengizinkan di pengaturan", color = NeonRed.copy(alpha = 0.8f), fontSize = 10.sp)
+                                }
+                            }
+                        }
+                    }
+
+                    // Notification Service Toggle
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -191,19 +227,10 @@ fun DashboardScreen(
                             .background(ObsidianBg.copy(alpha = 0.6f))
                             .border(1.dp, CardBorder.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
                             .clickable {
-                                if (isShieldActive) {
-                                    ClipboardMonitorService.stopService(context)
-                                    isShieldActive = false
-                                    Toast
-                                        .makeText(context, "Background Protection Nonaktif", Toast.LENGTH_SHORT)
-                                        .show()
-                                } else {
-                                    ClipboardMonitorService.startService(context)
-                                    isShieldActive = true
-                                    Toast
-                                        .makeText(context, "Background Protection Aktif 🛡️", Toast.LENGTH_SHORT)
-                                        .show()
-                                }
+                                val newState = !isAutoScanEnabled
+                                repository.setAutoScanEnabled(newState)
+                                isAutoScanEnabled = newState
+                                Toast.makeText(context, if (newState) "Auto Scan Aktif" else "Auto Scan Dinonaktifkan", Toast.LENGTH_SHORT).show()
                             }
                             .padding(horizontal = 12.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -211,31 +238,25 @@ fun DashboardScreen(
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
-                                imageVector = if (isShieldActive) Icons.Default.Shield else Icons.Default.Security,
+                                imageVector = if (isAutoScanEnabled) Icons.Default.NotificationsActive else Icons.Default.NotificationsNone,
                                 contentDescription = "Shield",
-                                tint = if (isShieldActive) NeonGreen else NeonRed,
+                                tint = if (isAutoScanEnabled) NeonGreen else NeonRed,
                                 modifier = Modifier.size(20.dp)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Auto Clipboard Scanner",
+                                text = "Auto Notification Scan",
                                 color = TextWhite,
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
                         Switch(
-                            checked = isShieldActive,
+                            checked = isAutoScanEnabled,
                             onCheckedChange = { active ->
-                                if (active) {
-                                    ClipboardMonitorService.startService(context)
-                                    isShieldActive = true
-                                    Toast.makeText(context, "Background Protection Aktif 🛡️", Toast.LENGTH_SHORT).show()
-                                } else {
-                                    ClipboardMonitorService.stopService(context)
-                                    isShieldActive = false
-                                    Toast.makeText(context, "Background Protection Nonaktif", Toast.LENGTH_SHORT).show()
-                                }
+                                repository.setAutoScanEnabled(active)
+                                isAutoScanEnabled = active
+                                Toast.makeText(context, if (active) "Auto Scan Aktif" else "Auto Scan Dinonaktifkan", Toast.LENGTH_SHORT).show()
                             },
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = Color.Black,
@@ -1705,8 +1726,116 @@ fun HistoryScreen(
 }
 
 /**
- * Shared History Row Item
+ * Notification List Screen
  */
+@Composable
+fun NotificationLogsScreen(
+    repository: CheckerRepository
+) {
+    val scope = rememberCoroutineScope()
+    val logs by repository.notificationLogs.collectAsState()
+    var selectedItem by remember { mutableStateOf<HistoryItem?>(null) }
+
+    CyberScreenWrapper(title = "Daftar Notifikasi") {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "MONITORING REAL-TIME",
+                    color = TextSteel,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                if (logs.isNotEmpty()) {
+                    Text(
+                        text = "Hapus Log",
+                        color = NeonRed,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.clickable {
+                            scope.launch { repository.clearNotificationLogs() }
+                        }
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+
+            if (logs.isEmpty()) {
+                Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Text(text = "Belum ada notifikasi yang ditangkap.", color = TextSteel, fontSize = 13.sp)
+                }
+            } else {
+                LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(logs) { item ->
+                        NotificationRowItem(item = item, onClick = { selectedItem = item })
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(80.dp))
+        }
+    }
+
+    if (selectedItem != null) {
+        HistoryDetailDialog(item = selectedItem!!, onDismiss = { selectedItem = null })
+    }
+}
+
+@Composable
+fun NotificationRowItem(item: HistoryItem, onClick: () -> Unit) {
+    val statusColor = when (item.status) {
+        "completed" -> {
+            // Check if it's likely a hoax or scam result
+            val isHoax = item.score >= 70 // Simple heuristic
+            if (isHoax) NeonGreen else if (item.score > 40) NeonGold else NeonRed
+        }
+        "analyzing" -> NeonBlue
+        "no_scan" -> TextSteel
+        "failed" -> NeonRed
+        else -> TextSteel
+    }
+
+    val time = try { item.timestamp.substring(11, 16) } catch (e: Exception) { "--:--" }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(CardCarbon)
+            .border(1.dp, CardBorder, RoundedCornerShape(12.dp))
+            .clickable { onClick() }
+            .padding(14.dp)
+    ) {
+        Column {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(text = item.appName ?: "Unknown App", color = NeonBlue, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Text(text = time, color = TextSteel, fontSize = 11.sp)
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(text = item.originalContent ?: "", color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 2)
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(modifier = Modifier.size(8.dp).background(statusColor, CircleShape))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = when(item.status) {
+                        "analyzing" -> "Sedang Dianalisis..."
+                        "completed" -> "Selesai Dianalisis (${item.score}%)"
+                        "no_scan" -> "Tidak Perlu Dipindai"
+                        "failed" -> "Gagal Dianalisis"
+                        else -> item.status.uppercase()
+                    },
+                    color = statusColor,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
+}
 @Composable
 fun HistoryRowItem(
     item: HistoryItem,
@@ -1755,8 +1884,13 @@ fun HistoryRowItem(
                         maxLines = 1
                     )
                     Spacer(modifier = Modifier.height(2.dp))
+                    val timeAndDate = try {
+                        item.timestamp.substring(11, 16) + " • " + item.timestamp.substring(0, 10)
+                    } catch (e: Exception) {
+                        item.timestamp
+                    }
                     Text(
-                        text = item.timestamp.substring(11, 16) + " • " + item.timestamp.substring(0, 10),
+                        text = timeAndDate,
                         color = TextSteel,
                         fontSize = 11.sp
                     )
@@ -1794,17 +1928,25 @@ fun HistoryDetailDialog(
     val gson = remember { Gson() }
     
     val hoaxRes = remember(item) {
-        if (item.type == "hoax") {
+        if (item.type == "hoax" || (item.type == "notification" && item.status == "completed")) {
             try {
-                gson.fromJson(gson.toJson(item.resultDetails), HoaxResponse::class.java)
+                val json = gson.toJson(item.resultDetails)
+                // Cek apakah ada field khas HoaxResponse
+                if (json.contains("verdictSummary") || json.contains("trustScore")) {
+                    gson.fromJson(json, HoaxResponse::class.java)
+                } else null
             } catch (e: Exception) { null }
         } else null
     }
     
     val scamRes = remember(item) {
-        if (item.type == "scam") {
+        if (item.type == "scam" || (item.type == "notification" && item.status == "completed")) {
             try {
-                gson.fromJson(gson.toJson(item.resultDetails), ScamResponse::class.java)
+                val json = gson.toJson(item.resultDetails)
+                // Cek apakah ada field khas ScamResponse
+                if (json.contains("dangerScore") || json.contains("totalEngines")) {
+                    gson.fromJson(json, ScamResponse::class.java)
+                } else null
             } catch (e: Exception) { null }
         } else null
     }
@@ -1855,7 +1997,16 @@ fun HistoryDetailDialog(
                 
                 val statusColor = when (item.status) {
                     "safe" -> NeonGreen
+                    "completed" -> {
+                        if (scamRes != null) {
+                            if (scamRes.dangerScore > 50) NeonRed else if (scamRes.dangerScore > 0) NeonGold else NeonGreen
+                        } else if (hoaxRes != null) {
+                            if (hoaxRes.trustScore >= 75) NeonGreen else if (hoaxRes.trustScore >= 40) NeonGold else NeonRed
+                        } else NeonGreen
+                    }
                     "warning", "neutral" -> NeonGold
+                    "analyzing" -> NeonBlue
+                    "no_scan" -> TextSteel
                     else -> NeonRed
                 }
                 
@@ -1869,14 +2020,20 @@ fun HistoryDetailDialog(
                     contentAlignment = Alignment.Center
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        if (item.status == "no_scan") {
+                            Text(text = "TIDAK DIPINDAI", color = statusColor, fontSize = 20.sp, fontWeight = FontWeight.Black)
+                        } else if (item.status == "analyzing") {
+                            CircularProgressIndicator(color = NeonBlue, modifier = Modifier.size(24.dp))
+                        } else {
+                            Text(
+                                text = "${item.score}%",
+                                color = statusColor,
+                                fontSize = 32.sp,
+                                fontWeight = FontWeight.Black
+                            )
+                        }
                         Text(
-                            text = "${item.score}%",
-                            color = statusColor,
-                            fontSize = 32.sp,
-                            fontWeight = FontWeight.Black
-                        )
-                        Text(
-                            text = if (item.type == "hoax") "TRUST SCORE" else "DANGER SCORE",
+                            text = if (item.type == "hoax") "TRUST SCORE" else if (item.type == "scam") "DANGER SCORE" else "HASIL ANALISIS",
                             color = TextSteel,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold
@@ -1886,7 +2043,7 @@ fun HistoryDetailDialog(
                 
                 Spacer(modifier = Modifier.height(16.dp))
                 
-                if (item.type == "hoax") {
+                if (item.type == "hoax" || (item.type == "notification" && hoaxRes != null)) {
                     if (hoaxRes != null) {
                         Text(text = "Rangkuman Analisis", color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                         Spacer(modifier = Modifier.height(4.dp))
@@ -1897,10 +2054,35 @@ fun HistoryDetailDialog(
                             Text(text = "Fakta Sebenarnya", color = NeonGreen, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                             Text(text = hoaxRes.correctedFact, color = TextWhite, fontSize = 13.sp, lineHeight = 18.sp)
                         }
+
+                        if (hoaxRes.googleFactChecks.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(text = "Hasil Google Fact Check", color = NeonBlue, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            hoaxRes.googleFactChecks.take(2).forEach { check ->
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 8.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(CardCarbon)
+                                        .border(1.dp, CardBorder, RoundedCornerShape(8.dp))
+                                        .padding(10.dp)
+                                ) {
+                                    Column {
+                                        Text(text = check.publisher, color = NeonBlue, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        Text(text = check.verdict, color = NeonRed, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                        Text(text = check.claim, color = TextWhite, fontSize = 12.sp, maxLines = 2)
+                                    }
+                                }
+                            }
+                        }
+                    } else if (item.status == "no_scan") {
+                        Text(text = "Alasan:", color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Text(text = item.resultDetails as? String ?: "Tidak mengandung berita atau tautan.", color = TextSteel, fontSize = 13.sp)
                     } else {
                         Text(text = "Gagal memuat detail mendalam.", color = NeonRed, fontSize = 12.sp)
                     }
-                } else {
+                } else if (item.type == "scam" || (item.type == "notification" && scamRes != null)) {
                     if (scamRes != null) {
                         Text(text = "Mitigasi Keamanan", color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                         Spacer(modifier = Modifier.height(4.dp))
