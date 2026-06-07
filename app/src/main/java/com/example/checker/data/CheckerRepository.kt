@@ -1,6 +1,7 @@
 package com.example.checker.data
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.util.Log
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
@@ -16,18 +17,41 @@ import java.io.File
 import java.util.UUID
 
 @Suppress("UNCHECKED_CAST")
-class CheckerRepository(private val context: Context? = null) {
+class CheckerRepository private constructor(private val context: Context) {
 
     private val api = NetworkClient.apiService
     private val gson = Gson()
-    private val sharedPrefs = context?.getSharedPreferences("checker_history", Context.MODE_PRIVATE)
+    private val sharedPrefs = context.getSharedPreferences("checker_history", Context.MODE_PRIVATE)
     
     // In-memory cache for Search History to make UI reactive
     private val _historyList = MutableStateFlow<List<HistoryItem>>(emptyList())
     val historyList: StateFlow<List<HistoryItem>> = _historyList
 
+    private val _notificationLogs = MutableStateFlow<List<HistoryItem>>(emptyList())
+    val notificationLogs: StateFlow<List<HistoryItem>> = _notificationLogs
+
+    companion object {
+        @Volatile
+        private var INSTANCE: CheckerRepository? = null
+
+        fun getInstance(context: Context): CheckerRepository {
+            return INSTANCE ?: synchronized(this) {
+                val instance = CheckerRepository(context.applicationContext)
+                INSTANCE = instance
+                instance
+            }
+        }
+    }
+
+    private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == "history_list") loadLocalHistory()
+        if (key == "notification_logs") loadNotificationLogs()
+    }
+
     init {
+        sharedPrefs.registerOnSharedPreferenceChangeListener(prefListener)
         loadLocalHistory()
+        loadNotificationLogs()
     }
 
     private fun saveLocalHistory(list: List<HistoryItem>) {
@@ -35,6 +59,14 @@ class CheckerRepository(private val context: Context? = null) {
             sharedPrefs?.edit()?.putString("history_list", gson.toJson(list))?.apply()
         } catch (e: Exception) {
             Log.e("CheckerRepository", "Failed to save history: ${e.message}")
+        }
+    }
+
+    private fun saveNotificationLogs(list: List<HistoryItem>) {
+        try {
+            sharedPrefs?.edit()?.putString("notification_logs", gson.toJson(list))?.apply()
+        } catch (e: Exception) {
+            Log.e("CheckerRepository", "Failed to save notification logs: ${e.message}")
         }
     }
 
@@ -48,6 +80,143 @@ class CheckerRepository(private val context: Context? = null) {
             } catch (e: Exception) {
                 Log.e("CheckerRepository", "Failed to load history: ${e.message}")
             }
+        }
+    }
+
+    private fun loadNotificationLogs() {
+        val json = sharedPrefs?.getString("notification_logs", null)
+        if (json != null) {
+            try {
+                val type = object : TypeToken<List<HistoryItem>>() {}.type
+                val list = gson.fromJson<List<HistoryItem>>(json, type) ?: emptyList()
+                _notificationLogs.value = list
+            } catch (e: Exception) {
+                Log.e("CheckerRepository", "Failed to load notification logs: ${e.message}")
+            }
+        }
+    }
+
+    suspend fun processNotification(appName: String, content: String) {
+        if (!isAutoScanEnabled()) return
+
+        val id = UUID.randomUUID().toString().take(8)
+        val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.getDefault()).format(java.util.Date())
+        
+        // Cek duplikasi via hash
+        val contentHash = content.hashCode().toString()
+        if (_notificationLogs.value.any { it.originalContent?.hashCode().toString() == contentHash }) {
+            return
+        }
+
+        val initialItem = HistoryItem(
+            id = id,
+            type = "notification",
+            title = content.take(50),
+            score = 0,
+            status = "analyzing",
+            timestamp = timestamp,
+            appName = appName,
+            originalContent = content
+        )
+
+        addNotificationLog(initialItem)
+
+        // Analisis awal
+        val urls = extractUrls(content)
+        val isIgnoreKeyword = containsIgnoreKeywords(content)
+        val isNews = containsNewsKeywords(content) && !isIgnoreKeyword
+
+        if (urls.isNotEmpty() && !isIgnoreKeyword) {
+            // Scan URL
+            val url = urls.first()
+            val result = scanUrl(url)
+            result.onSuccess { scanResult ->
+                updateNotificationStatus(id, "completed", scanResult.dangerScore, scanResult)
+                addLocalHistory("scam", "Notif: $appName - $url", scanResult.dangerScore, scanResult.threatLevel, scanResult)
+            }.onFailure {
+                updateNotificationStatus(id, "failed")
+            }
+        } else if (isNews) {
+            // Scan Hoax with fallback mechanism
+            var result = checkHoax(content, null, "gemini")
+            if (result.isFailure) {
+                Log.d("CheckerRepository", "Gemini failed, falling back to DeepSeek...")
+                result = checkHoax(content, null, "deepseek")
+            }
+
+            result.onSuccess { hoaxResult ->
+                updateNotificationStatus(id, "completed", hoaxResult.trustScore, hoaxResult)
+                addLocalHistory("hoax", "Notif: $appName - ${content.take(30)}", hoaxResult.trustScore, hoaxResult.status, hoaxResult)
+            }.onFailure {
+                updateNotificationStatus(id, "failed")
+            }
+        } else {
+            // Tidak perlu dipindai
+            updateNotificationStatus(id, "no_scan")
+            val reason = if (isIgnoreKeyword) "Notifikasi sistem/baterai diabaikan." else "Tidak mengandung berita atau tautan."
+            addLocalHistory("notification", "Notif: $appName - ${content.take(30)}", 0, "no_scan", reason)
+        }
+    }
+
+    private fun containsIgnoreKeywords(text: String): Boolean {
+        val ignoreKeywords = listOf("charging", "mengisi daya", "battery", "baterai", "daya terhubung", "power connected")
+        return ignoreKeywords.any { text.lowercase().contains(it) }
+    }
+
+    private fun extractUrls(text: String): List<String> {
+        val urls = mutableListOf<String>()
+        val urlRegex = "((https?|ftp|file)://[-a-zA-Z0-9+&@#/%?=~_|!:,.;]*[-a-zA-Z0-9+&@#/%=~_|])"
+        val pattern = java.util.regex.Pattern.compile(urlRegex, java.util.regex.Pattern.CASE_INSENSITIVE)
+        val matcher = pattern.matcher(text)
+        while (matcher.find()) {
+            val group = matcher.group(1)
+            if (group != null) {
+                urls.add(group)
+            }
+        }
+        return urls
+    }
+
+    private fun containsNewsKeywords(text: String): Boolean {
+        val keywords = listOf("berita", "kabaran", "info", "viral", "kejadian", "peristiwa", "waspada", "pengumuman")
+        return keywords.any { text.lowercase().contains(it) } || text.split(" ").size > 10
+    }
+
+    private fun addNotificationLog(item: HistoryItem) {
+        val currentList = _notificationLogs.value.toMutableList()
+        currentList.add(0, item)
+        if (currentList.size > 100) currentList.removeAt(currentList.lastIndex)
+        _notificationLogs.value = currentList
+        saveNotificationLogs(currentList)
+    }
+
+    private fun updateNotificationStatus(id: String, status: String, score: Int = 0, details: Any? = null) {
+        val currentList = _notificationLogs.value.toMutableList()
+        val index = currentList.indexOfFirst { it.id == id }
+        if (index != -1) {
+            val oldItem = currentList[index]
+            currentList[index] = oldItem.copy(status = status, score = score, resultDetails = details)
+            _notificationLogs.value = currentList
+            saveNotificationLogs(currentList)
+        }
+    }
+
+    fun isAutoScanEnabled(): Boolean {
+        return sharedPrefs.getBoolean("auto_scan_enabled", false)
+    }
+
+    fun setAutoScanEnabled(enabled: Boolean) {
+        sharedPrefs.edit().putBoolean("auto_scan_enabled", enabled).apply()
+    }
+
+    suspend fun clearNotificationLogs(): Result<Boolean> {
+        return try {
+            val prefs = context?.getSharedPreferences("checker_history", Context.MODE_PRIVATE)
+            prefs?.edit()?.remove("notification_logs")?.apply()
+            _notificationLogs.value = emptyList()
+            Result.success(true)
+        } catch (e: Exception) {
+            Result.success(false)
         }
     }
 
@@ -126,7 +295,7 @@ class CheckerRepository(private val context: Context? = null) {
         )
         val currentList = _historyList.value.toMutableList()
         currentList.add(0, newItem)
-        if (currentList.size > 50) currentList.removeLast()
+        if (currentList.size > 50) currentList.removeAt(currentList.lastIndex)
         saveLocalHistory(currentList)
         _historyList.value = currentList
     }

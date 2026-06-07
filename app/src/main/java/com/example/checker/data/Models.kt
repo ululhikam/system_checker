@@ -6,7 +6,7 @@ import com.google.gson.annotations.SerializedName
 data class HoaxRequest(
     @SerializedName("text") val text: String?,
     @SerializedName("imageUrl") val imageUrl: String?,
-    @SerializedName("engine") val engine: String // "gemini" or "deepseek"
+    @SerializedName("engine") val engine: String
 )
 
 data class GoogleFactCheck(
@@ -73,8 +73,10 @@ data class HistoryItem(
     @SerializedName("type") val type: String, // "hoax" or "scam"
     @SerializedName("title") val title: String,
     @SerializedName("score") val score: Int,
-    @SerializedName("status") val status: String, // "safe", "warning", "dangerous", "neutral"
+    @SerializedName("status") val status: String, // "safe", "warning", "dangerous", "neutral", "analyzing", "no_scan", "failed"
     @SerializedName("timestamp") val timestamp: String,
-    @SerializedName("resultDetails") val resultDetails: Any? // Can be cast or mapped based on type
+    @SerializedName("resultDetails") val resultDetails: Any? = null,
+    @SerializedName("appName") val appName: String? = null,
+    @SerializedName("originalContent") val originalContent: String? = null
 )
 

@@ -32,15 +32,17 @@ import com.example.checker.ui.DashboardScreen
 import com.example.checker.ui.HistoryScreen
 import com.example.checker.ui.HoaxScreen
 import com.example.checker.ui.ScamScreen
+import com.example.checker.ui.NotificationLogsScreen
 import com.example.checker.ui.theme.CheckerTheme
 import com.example.checker.ui.theme.CardBorder
 import com.example.checker.ui.theme.ObsidianBg
 import com.example.checker.ui.theme.NeonGreen
 import com.example.checker.ui.theme.TextSteel
+import androidx.compose.material.icons.filled.Notifications
 
 class MainActivity : ComponentActivity() {
 
-    private val repository = CheckerRepository()
+    private val repository by lazy { CheckerRepository.getInstance(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -64,8 +66,9 @@ class MainActivity : ComponentActivity() {
                         ) {
                             val items = listOf(
                                 NavigationItem("dashboard", "Dashboard", Icons.Default.Dashboard),
-                                NavigationItem("hoax", "Hoax Cek", Icons.Default.FactCheck),
-                                NavigationItem("scam", "Scam Pindai", Icons.Default.Security),
+                                NavigationItem("notifications", "Notif", Icons.Default.Notifications),
+                                NavigationItem("hoax", "Hoax", Icons.Default.FactCheck),
+                                NavigationItem("scam", "Scam", Icons.Default.Security),
                                 NavigationItem("history", "Riwayat", Icons.Default.History)
                             )
 
@@ -114,6 +117,9 @@ class MainActivity : ComponentActivity() {
                     ) {
                         composable("dashboard") {
                             DashboardScreen(navController = navController, repository = repository)
+                        }
+                        composable("notifications") {
+                            NotificationLogsScreen(repository = repository)
                         }
                         composable("hoax") {
                             HoaxScreen(repository = repository)

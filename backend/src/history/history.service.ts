@@ -6,8 +6,8 @@ export interface HistoryItem {
   id: string;
   type: 'hoax' | 'scam';
   title: string;
-  score: number; // trustScore for hoax, dangerScore for scam
-  status: string; // 'safe' | 'warning' | 'dangerous' | 'neutral'
+  score: number;
+  status: string;
   timestamp: string;
   resultDetails: any;
 }
@@ -31,13 +31,12 @@ export class HistoryService {
           `Loaded ${this.historyList.length} history items from cache file.`,
         );
       } else {
-        // Initialize with default attractive demo history items
-        this.historyList = this.getDemoHistory();
+        this.historyList = [];
         this.saveHistoryToFile();
       }
     } catch (err) {
       this.logger.error(`Failed to load history cache: ${err.message}`);
-      this.historyList = this.getDemoHistory();
+      this.historyList = [];
     }
   }
 
@@ -114,84 +113,6 @@ export class HistoryService {
     this.historyList = [];
     this.saveHistoryToFile();
     return true;
-  }
-
-  private getDemoHistory(): HistoryItem[] {
-    return [
-      {
-        id: 'demo-1',
-        type: 'hoax',
-        title: 'Pemenang Undian Shopee 150 Juta di WA',
-        score: 8,
-        status: 'unsafe',
-        timestamp: new Date(Date.now() - 3600000 * 2).toISOString(), // 2 hours ago
-        resultDetails: {
-          verdictSummary: '🚨 Terkonfirmasi HOAX Penipuan Finansial (Scam)',
-          explanation:
-            'Tautan undian yang dikirim via WhatsApp bukan situs resmi Shopee melainkan modus phising.',
-          aiInsights: {
-            engineUsed: 'Gemini 2.5 Flash',
-            contextNarrative:
-              'Penipuan phishing Shopee menggunakan bit.ly sangat merugikan masyarakat.',
-            credibilityAnalysis: 'Situs bit.ly tidak memiliki legitimasi.',
-            recommendations: 'Abaikan pesan. Jangan klik tautan.',
-          },
-        },
-      },
-      {
-        id: 'demo-2',
-        type: 'scam',
-        title: 'bit.ly/shopee-hadiah-2026',
-        score: 88,
-        status: 'dangerous',
-        timestamp: new Date(Date.now() - 3600000 * 2.1).toISOString(),
-        resultDetails: {
-          dangerScore: 88,
-          threatLevel: 'dangerous',
-          maliciousCount: 14,
-          totalEngines: 72,
-          ipAddress: '194.26.137.45',
-          hostCountry: 'Ukraine',
-          safetyAdvice: '🚨 Bahaya! Domain phishing terdeteksi aktif.',
-        },
-      },
-      {
-        id: 'demo-3',
-        type: 'hoax',
-        title: 'Gempa Megathrust Hancurkan Jakarta Besok',
-        score: 35,
-        status: 'warning',
-        timestamp: new Date(Date.now() - 3600000 * 24).toISOString(), // 1 day ago
-        resultDetails: {
-          verdictSummary: '⚠️ Informasi Menyesatkan (Misleading Content)',
-          explanation:
-            'Potensi gempa nyata, namun ramalan hari dan waktu terjadinya adalah hoax.',
-          aiInsights: {
-            engineUsed: 'DeepSeek V4 Flash',
-            contextNarrative:
-              'Kecemasan megathrust dieksploitasi untuk kepanikan publik.',
-            credibilityAnalysis: 'Bantahan resmi telah dikeluarkan oleh BMKG.',
-            recommendations: 'Ikuti info resmi dari BMKG saja.',
-          },
-        },
-      },
-      {
-        id: 'demo-4',
-        type: 'scam',
-        title: 'undangan_pernikahan.apk',
-        score: 95,
-        status: 'dangerous',
-        timestamp: new Date(Date.now() - 3600000 * 48).toISOString(), // 2 days ago
-        resultDetails: {
-          dangerScore: 95,
-          threatLevel: 'dangerous',
-          maliciousCount: 18,
-          totalEngines: 68,
-          safetyAdvice:
-            '🚨 Malware Keras! APK ini dirancang untuk mencuri SMS OTP perbankan.',
-        },
-      },
-    ];
   }
 }
 
