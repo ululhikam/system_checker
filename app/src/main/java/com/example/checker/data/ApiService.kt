@@ -28,7 +28,15 @@ interface CheckerApiService {
 }
 
 object NetworkClient {
-    private const val BASE_URL = "https://checker-ruddy-seven.vercel.app/api/"
+    // =========================================================================
+    // PILIHAN BASE URL UNTUK KONEKSI KE BACKEND (BFF)
+    // =========================================================================
+
+    // Pilihan 1: Localhost jika menggunakan Emulator Android bawaan
+    // private const val BASE_URL = "http://10.0.2.2:3000/api/"
+    
+    // Pilihan 2: Localhost jika menggunakan HP Fisik (Ganti dengan IP lokal komputer Anda)
+    // private const val BASE_URL = "http://192.168.1.100:3000/api/"
 
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
