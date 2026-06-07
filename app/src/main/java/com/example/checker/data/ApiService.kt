@@ -32,10 +32,10 @@ object NetworkClient {
     // PILIHAN BASE URL UNTUK KONEKSI KE BACKEND (BFF)
     // =========================================================================
 
-    // Pilihan 1: Localhost jika menggunakan Emulator Android bawaan
-    // private const val BASE_URL = "http://10.0.2.2:3000/api/"
+    // Pilihan 1: Localhost jika menggunakan Emulator Android bawaan (AKTIF DEFAULT)
+    private const val BASE_URL = "http://10.0.2.2:3000/api/"
     
-    // Pilihan 2: Localhost jika menggunakan HP Fisik (Ganti dengan IP lokal komputer Anda)
+    // Pilihan 2: Localhost jika menggunakan HP Fisik (Uncomment & ganti dengan IP lokal komputer Anda)
     // private const val BASE_URL = "http://192.168.1.100:3000/api/"
 
     private val okHttpClient = OkHttpClient.Builder()
