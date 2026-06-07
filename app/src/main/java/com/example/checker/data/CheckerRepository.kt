@@ -99,6 +99,13 @@ class CheckerRepository private constructor(private val context: Context) {
     suspend fun processNotification(appName: String, content: String) {
         if (!isAutoScanEnabled()) return
 
+        // Extract URLs first to ensure we only detect links
+        val urls = extractUrls(content)
+        val isIgnoreKeyword = containsIgnoreKeywords(content)
+
+        // Only process if it contains a link and is not a system/battery notification
+        if (urls.isEmpty() || isIgnoreKeyword) return
+
         val id = UUID.randomUUID().toString().take(8)
         val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.getDefault()).format(java.util.Date())
         
@@ -108,10 +115,11 @@ class CheckerRepository private constructor(private val context: Context) {
             return
         }
 
+        val url = urls.first()
         val initialItem = HistoryItem(
             id = id,
             type = "notification",
-            title = content.take(50),
+            title = "Scan Link: $url",
             score = 0,
             status = "analyzing",
             timestamp = timestamp,
@@ -121,40 +129,13 @@ class CheckerRepository private constructor(private val context: Context) {
 
         addNotificationLog(initialItem)
 
-        // Analisis awal
-        val urls = extractUrls(content)
-        val isIgnoreKeyword = containsIgnoreKeywords(content)
-        val isNews = containsNewsKeywords(content) && !isIgnoreKeyword
-
-        if (urls.isNotEmpty() && !isIgnoreKeyword) {
-            // Scan URL
-            val url = urls.first()
-            val result = scanUrl(url)
-            result.onSuccess { scanResult ->
-                updateNotificationStatus(id, "completed", scanResult.dangerScore, scanResult)
-                addLocalHistory("scam", "Notif: $appName - $url", scanResult.dangerScore, scanResult.threatLevel, scanResult)
-            }.onFailure {
-                updateNotificationStatus(id, "failed")
-            }
-        } else if (isNews) {
-            // Scan Hoax with fallback mechanism
-            var result = checkHoax(content, null, "gemini")
-            if (result.isFailure) {
-                Log.d("CheckerRepository", "Gemini failed, falling back to DeepSeek...")
-                result = checkHoax(content, null, "deepseek")
-            }
-
-            result.onSuccess { hoaxResult ->
-                updateNotificationStatus(id, "completed", hoaxResult.trustScore, hoaxResult)
-                addLocalHistory("hoax", "Notif: $appName - ${content.take(30)}", hoaxResult.trustScore, hoaxResult.status, hoaxResult)
-            }.onFailure {
-                updateNotificationStatus(id, "failed")
-            }
-        } else {
-            // Tidak perlu dipindai
-            updateNotificationStatus(id, "no_scan")
-            val reason = if (isIgnoreKeyword) "Notifikasi sistem/baterai diabaikan." else "Tidak mengandung berita atau tautan."
-            addLocalHistory("notification", "Notif: $appName - ${content.take(30)}", 0, "no_scan", reason)
+        // Scan URL
+        val result = scanUrl(url)
+        result.onSuccess { scanResult ->
+            updateNotificationStatus(id, "completed", scanResult.dangerScore, scanResult)
+            addLocalHistory("scam", "Notif: $appName - $url", scanResult.dangerScore, scanResult.threatLevel, scanResult)
+        }.onFailure {
+            updateNotificationStatus(id, "failed")
         }
     }
 
