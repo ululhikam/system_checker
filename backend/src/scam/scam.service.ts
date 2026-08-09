@@ -4,6 +4,8 @@
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
 import { Injectable, Logger } from '@nestjs/common';
 import axios, { AxiosResponse } from 'axios';
+import { getGeminiApiKeys, callGeminiApiWithFallback } from '../common/gemini-rotator';
+
 import * as crypto from 'crypto';
 import * as dns from 'dns';
 import { promisify } from 'util';
@@ -171,12 +173,8 @@ export class ScamService {
     aiVerdictExplanation: string;
     safetyAdviceText: string;
   } | null> {
-    const geminiKey = process.env.GEMINI_API_KEY;
-    if (
-      !geminiKey ||
-      geminiKey === 'your_gemini_api_key' ||
-      geminiKey.trim() === ''
-    ) {
+    const geminiKeys = getGeminiApiKeys();
+    if (geminiKeys.length === 0) {
       this.logger.warn(
         'Skipping AI Web-Scraping: GEMINI_API_KEY is not configured',
       );
@@ -233,34 +231,19 @@ Kembalikan hasil analisis Anda dalam format JSON valid tanpa embel-embel markdow
 `;
 
     try {
-      let retries = 3;
-      let delayMs = 1500;
-      let llmResponse: any;
-
-      while (retries > 0) {
-        try {
-          llmResponse = await axios.post(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
+      const llmResponse = await callGeminiApiWithFallback(
+        (key) =>
+          axios.post(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
             {
               contents: [{ parts: [{ text: prompt }] }],
               generationConfig: { responseMimeType: 'application/json' },
             },
             { timeout: 20000 },
-          );
-          break;
-        } catch (err: any) {
-          retries--;
-          if (err.response?.status === 429 && retries > 0) {
-            this.logger.warn(
-              `Gemini API 429 rate limit hit in ScamService (Web Scraping Analysis). Retrying in ${delayMs}ms... (Retries left: ${retries})`,
-            );
-            await new Promise((resolve) => setTimeout(resolve, delayMs));
-            delayMs *= 2;
-          } else {
-            throw err;
-          }
-        }
-      }
+          ),
+        this.logger,
+        'ScamService AI Inspection',
+      );
 
       const rawText =
         llmResponse.data.candidates?.[0]?.content?.parts?.[0]?.text || '';

@@ -1,5 +1,7 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import axios, { AxiosResponse } from 'axios';
+import { getGeminiApiKeys, callGeminiApiWithFallback } from '../common/gemini-rotator';
+
 
 export class FactCheckRequest {
   text?: string;
@@ -151,17 +153,14 @@ export class HoaxService {
 
     // Validate API Keys
     const googleApiKey = process.env.GOOGLE_FACT_CHECK_API_KEY;
-    const geminiKey = process.env.GEMINI_API_KEY;
+    const geminiKeys = getGeminiApiKeys();
     const deepseekKey = process.env.DEEPSEEK_API_KEY;
 
     const isGoogleKeyMissing =
       !googleApiKey ||
       googleApiKey === 'your_google_fact_check_api' ||
       googleApiKey.trim() === '';
-    const isGeminiKeyMissing =
-      !geminiKey ||
-      geminiKey === 'your_gemini_api_key' ||
-      geminiKey.trim() === '';
+    const isGeminiKeysMissing = geminiKeys.length === 0;
     const isDeepseekKeyMissing =
       !deepseekKey ||
       deepseekKey === 'your_deepseek_api_key' ||
@@ -173,9 +172,9 @@ export class HoaxService {
       );
     }
 
-    if (payload.engine === 'gemini' && isGeminiKeyMissing) {
+    if (payload.engine === 'gemini' && isGeminiKeysMissing) {
       throw new BadRequestException(
-        'API_KEY_NOT_CONFIGURED: Gemini API Key belum dikoneksikan di file .env backend!',
+        'API_KEY_NOT_CONFIGURED: Gemini API Key belum dikoneksikan di file .env backend! Tambahkan GEMINI_API_KEY atau GEMINI_API_KEYS di .env.',
       );
     }
 
@@ -258,8 +257,8 @@ export class HoaxService {
     try {
       let parsed: LlmParsedResponse;
 
-      if (payload.engine === 'gemini' && geminiKey) {
-        // Step 1: Web grounding search with Gemini
+      if (payload.engine === 'gemini' && geminiKeys.length > 0) {
+        // Step 1: Web grounding search with Gemini (dengan Fallback / Key Rotation)
         const step1Prompt = `Lakukan analisis cek fakta mendalam dan pencarian web terbaru untuk memverifikasi klaim berikut.
 
 Klaim: "${queryText}"
@@ -277,41 +276,28 @@ Tugas Anda:
 4. Berikan penjelasan singkat maksimal 3 kalimat mengenai alasan Anda memilih status tersebut dan jelaskan fakta yang sebenarnya.
 `;
 
-        let retries = 3;
-        let delayMs = 1500;
         let step1Response: AxiosResponse<GeminiResponse> | null = null;
 
-        while (retries > 0) {
-          try {
-            step1Response = await axios.post(
-              `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
-              {
-                contents: [{ parts: [{ text: step1Prompt }] }],
-                tools: [{ google_search: {} }],
-              },
-            );
-            break;
-          } catch (err: unknown) {
-            retries--;
-            const axiosErr = err as {
-              response?: { status?: number; data?: any };
-            };
-            if (axiosErr.response?.status === 429 && retries > 0) {
-              this.logger.warn(
-                `Gemini API 429 rate limit hit in HoaxService (Step 1). Retrying in ${delayMs}ms... (Retries left: ${retries})`,
-              );
-              await new Promise((resolve) => setTimeout(resolve, delayMs));
-              delayMs *= 2;
-            } else if (axiosErr.response?.status === 429) {
-              this.logger.error('Gemini API 429 rate limit hit - all retries exhausted (Step 1)');
-              return this.createLimitReachedResult(queryText, payload.engine, googleFactChecks);
-            } else {
-              this.logger.error(
-                `Gemini API Step 1 failed: ${JSON.stringify(axiosErr.response?.data || err)}`,
-              );
-              throw err;
-            }
+        try {
+          step1Response = await callGeminiApiWithFallback<GeminiResponse>(
+            (key) =>
+              axios.post(
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
+                {
+                  contents: [{ parts: [{ text: step1Prompt }] }],
+                  tools: [{ google_search: {} }],
+                },
+              ),
+            this.logger,
+            'HoaxService Step 1 (Web Search)',
+          );
+        } catch (err: unknown) {
+          const axiosErr = err as { response?: { status?: number } };
+          if (axiosErr.response?.status === 429) {
+            this.logger.error('Seluruh Gemini API Key mencapai limit 429 pada Step 1');
+            return this.createLimitReachedResult(queryText, payload.engine, googleFactChecks);
           }
+          throw err;
         }
 
         const step1Text =
@@ -363,41 +349,28 @@ Aturan Tambahan:
 - Kembalikan HANYA JSON murni. Jangan tambahkan markdown code block (\`\`\`json), markdown formatting, atau karakter tambahan lainnya di luar format JSON.
 `;
 
-        retries = 3;
-        delayMs = 1500;
         let step2Response: AxiosResponse<GeminiResponse> | null = null;
 
-        while (retries > 0) {
-          try {
-            step2Response = await axios.post(
-              `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
-              {
-                contents: [{ parts: [{ text: step2Prompt }] }],
-                generationConfig: { responseMimeType: 'application/json' },
-              },
-            );
-            break;
-          } catch (err: unknown) {
-            retries--;
-            const axiosErr = err as {
-              response?: { status?: number; data?: any };
-            };
-            if (axiosErr.response?.status === 429 && retries > 0) {
-              this.logger.warn(
-                `Gemini API 429 rate limit hit in HoaxService (Step 2). Retrying in ${delayMs}ms... (Retries left: ${retries})`,
-              );
-              await new Promise((resolve) => setTimeout(resolve, delayMs));
-              delayMs *= 2;
-            } else if (axiosErr.response?.status === 429) {
-              this.logger.error('Gemini API 429 rate limit hit - all retries exhausted (Step 2)');
-              return this.createLimitReachedResult(queryText, payload.engine, googleFactChecks);
-            } else {
-              this.logger.error(
-                `Gemini API Step 2 failed: ${JSON.stringify(axiosErr.response?.data || err)}`,
-              );
-              throw err;
-            }
+        try {
+          step2Response = await callGeminiApiWithFallback<GeminiResponse>(
+            (key) =>
+              axios.post(
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
+                {
+                  contents: [{ parts: [{ text: step2Prompt }] }],
+                  generationConfig: { responseMimeType: 'application/json' },
+                },
+              ),
+            this.logger,
+            'HoaxService Step 2 (JSON Structuring)',
+          );
+        } catch (err: unknown) {
+          const axiosErr = err as { response?: { status?: number } };
+          if (axiosErr.response?.status === 429) {
+            this.logger.error('Seluruh Gemini API Key mencapai limit 429 pada Step 2');
+            return this.createLimitReachedResult(queryText, payload.engine, googleFactChecks);
           }
+          throw err;
         }
 
         const rawText =

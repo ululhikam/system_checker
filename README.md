@@ -24,7 +24,20 @@ Backend berfungsi sebagai jembatan antara aplikasi Android dan API pihak ketiga 
    ```
    Server akan berjalan di `http://localhost:3000`.
 
-### 2. Persiapan Android App
+### 2. Persiapan Web App (Frontend)
+Web versi modern berbasis React + Vite + Tailwind CSS yang terhubung langsung dengan BFF Backend NestJS.
+
+1. Buka terminal dan masuk ke folder frontend:
+   ```bash
+   cd frontend
+   ```
+2. Jalankan server pengembangan web:
+   ```bash
+   npm run dev
+   ```
+3. Buka peramban (browser) di alamat `http://localhost:5173`.
+
+### 3. Persiapan Android App
 Aplikasi ini dikembangkan menggunakan Jetpack Compose di Android Studio.
 
 1. Buka project menggunakan **Android Studio**.
@@ -33,6 +46,7 @@ Aplikasi ini dikembangkan menggunakan Jetpack Compose di Android Studio.
 4. Klik tombol **Run** (ikon play hijau) di Android Studio.
 
 ---
+
 
 ## 🔌 Cara Menyambungkan Aplikasi Android dengan Backend (BFF)
 
