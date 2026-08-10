@@ -163,48 +163,57 @@ export const FileScanner: React.FC = () => {
       {result && (
         <div className="card-clean p-4 sm:p-7 space-y-4 sm:space-y-6 animate-fadeIn">
           
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 sm:pb-6 border-b border-slate-100">
-            <div className="flex items-center gap-3">
-              <div className={`p-2.5 sm:p-3 rounded-2xl border ${
-                result.status === 'safe'
-                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                  : result.status === 'suspicious'
-                  ? 'bg-amber-50 text-amber-700 border-amber-200'
-                  : 'bg-rose-50 text-rose-700 border-rose-200'
-              } shrink-0`}>
-                {result.status === 'safe' ? (
-                  <CheckCircle2 className="w-5 h-5 sm:w-6 sm:h-6" />
-                ) : result.status === 'suspicious' ? (
-                  <AlertTriangle className="w-5 h-5 sm:w-6 sm:h-6" />
-                ) : (
-                  <ShieldAlert className="w-5 h-5 sm:w-6 sm:h-6" />
-                )}
-              </div>
-              <div className="min-w-0">
-                <span className={`inline-block px-2.5 sm:px-3 py-0.5 rounded-full text-[10px] font-extrabold uppercase border mb-1 ${
-                  result.status === 'safe'
-                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                    : result.status === 'suspicious'
-                    ? 'bg-amber-50 text-amber-700 border-amber-200'
-                    : 'bg-rose-50 text-rose-700 border-rose-200'
-                }`}>
-                  BERKAS {result.status === 'safe' ? 'BERSIH' : result.status === 'suspicious' ? 'PERLU WASPADA' : 'MALWARE TERDETEKSI'}
-                </span>
-                <h3 className="text-sm sm:text-base font-bold text-slate-900 font-mono truncate">{result.target}</h3>
-              </div>
-            </div>
+          {(() => {
+            const level = result.threatLevel || result.status || 'safe';
+            const score = result.dangerScore ?? result.threatScore ?? 0;
+            const isSafe = level === 'safe';
+            const isWarning = level === 'warning' || level === 'suspicious';
 
-            <div className="flex items-center gap-3 bg-slate-50 px-4 py-2 rounded-2xl border border-slate-200 w-full sm:w-auto justify-between sm:justify-start">
-              <div className="text-right">
-                <div className="text-[10px] text-slate-400 font-bold uppercase">Threat Score</div>
-                <div className="text-lg sm:text-xl font-black text-rose-600">{result.threatScore} / 100</div>
+            return (
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 sm:pb-6 border-b border-slate-100">
+                <div className="flex items-center gap-3">
+                  <div className={`p-2.5 sm:p-3 rounded-2xl border ${
+                    isSafe
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      : isWarning
+                      ? 'bg-amber-50 text-amber-700 border-amber-200'
+                      : 'bg-rose-50 text-rose-700 border-rose-200'
+                  } shrink-0`}>
+                    {isSafe ? (
+                      <CheckCircle2 className="w-5 h-5 sm:w-6 sm:h-6" />
+                    ) : isWarning ? (
+                      <AlertTriangle className="w-5 h-5 sm:w-6 sm:h-6" />
+                    ) : (
+                      <ShieldAlert className="w-5 h-5 sm:w-6 sm:h-6" />
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <span className={`inline-block px-2.5 sm:px-3 py-0.5 rounded-full text-[10px] font-extrabold uppercase border mb-1 ${
+                      isSafe
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : isWarning
+                        ? 'bg-amber-50 text-amber-700 border-amber-200'
+                        : 'bg-rose-50 text-rose-700 border-rose-200'
+                    }`}>
+                      BERKAS {isSafe ? 'BERSIH' : isWarning ? 'PERLU WASPADA' : 'MALWARE TERDETEKSI'}
+                    </span>
+                    <h3 className="text-sm sm:text-base font-bold text-slate-900 font-mono truncate">{result.target}</h3>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 bg-slate-50 px-4 py-2 rounded-2xl border border-slate-200 w-full sm:w-auto justify-between sm:justify-start">
+                  <div className="text-right">
+                    <div className="text-[10px] text-slate-400 font-bold uppercase">Danger Score</div>
+                    <div className="text-lg sm:text-xl font-black text-rose-600">{score} / 100</div>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
+            );
+          })()}
 
           <div className="p-3.5 sm:p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1.5 sm:space-y-2">
-            <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Hasil Pemindaian Keamanan</h4>
-            <p className="text-xs text-slate-700 leading-relaxed">{result.summary}</p>
+            <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Hasil & Analisis Keamanan Berkas</h4>
+            <p className="text-xs text-slate-700 leading-relaxed">{result.safetyAdvice || result.summary}</p>
           </div>
 
         </div>

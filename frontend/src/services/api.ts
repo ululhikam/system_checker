@@ -58,8 +58,8 @@ export const scanUrl = async (payload: UrlScanRequest): Promise<ScamScanResult> 
   saveLocalHistory({
     type: 'scam',
     title: result.target || payload.url,
-    score: result.threatScore,
-    status: result.status,
+    score: result.dangerScore ?? result.threatScore ?? 0,
+    status: (result.threatLevel as any) || result.status || 'safe',
     resultDetails: result,
   });
 
@@ -82,8 +82,8 @@ export const scanFile = async (file: File): Promise<ScamScanResult> => {
   saveLocalHistory({
     type: 'scam',
     title: `File: ${file.name}`,
-    score: result.threatScore,
-    status: result.status,
+    score: result.dangerScore ?? result.threatScore ?? 0,
+    status: (result.threatLevel as any) || result.status || 'safe',
     resultDetails: result,
   });
 

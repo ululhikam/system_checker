@@ -43,15 +43,17 @@ export const UrlScanner: React.FC = () => {
     }
   };
 
-  const getStatusBadge = (status: string, score: number) => {
-    if (status === 'safe' || score === 0) {
+  const getStatusBadge = (threatLevel?: string, status?: string, score?: number) => {
+    const level = threatLevel || status || 'safe';
+    const sc = score ?? 0;
+    if (level === 'safe' || sc === 0) {
       return {
         bg: 'bg-emerald-50 text-emerald-700 border-emerald-200',
         icon: ShieldCheck,
         label: 'TAUTAN AMAN & BERSIH',
       };
     }
-    if (status === 'suspicious' || (score > 0 && score < 3)) {
+    if (level === 'warning' || level === 'suspicious' || (sc > 0 && sc <= 50)) {
       return {
         bg: 'bg-amber-50 text-amber-700 border-amber-200',
         icon: AlertOctagon,
@@ -139,8 +141,13 @@ export const UrlScanner: React.FC = () => {
         <div className="card-clean p-4 sm:p-7 space-y-4 sm:space-y-6 animate-fadeIn">
           
           {(() => {
-            const badge = getStatusBadge(result.status, result.threatScore);
+            const flaggedCount = result.flaggedEngineCount ?? result.maliciousCount ?? 0;
+            const totalEnginesCount = result.totalEngines ?? result.enginesAnalyzed ?? 70;
+            const scoreVal = result.dangerScore ?? result.threatScore ?? 0;
+
+            const badge = getStatusBadge(result.threatLevel, result.status, scoreVal);
             const BadgeIcon = badge.icon;
+
             return (
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 sm:pb-6 border-b border-slate-100">
                 <div className="flex items-center gap-3">
@@ -157,9 +164,9 @@ export const UrlScanner: React.FC = () => {
 
                 <div className="flex items-center gap-3 bg-slate-50 px-4 py-2 rounded-2xl border border-slate-200 w-full sm:w-auto justify-between sm:justify-start">
                   <div className="text-right">
-                    <div className="text-[10px] text-slate-400 font-bold uppercase">Deteksi Threat</div>
+                    <div className="text-[10px] text-slate-400 font-bold uppercase">Deteksi Threat / Danger Score</div>
                     <div className="text-lg sm:text-xl font-black text-rose-600">
-                      {result.maliciousCount} <span className="text-xs text-slate-400 font-normal">/ {result.enginesAnalyzed || 90} Engine</span>
+                      {flaggedCount} <span className="text-xs text-slate-400 font-normal">/ {totalEnginesCount} Engine ({scoreVal}%)</span>
                     </div>
                   </div>
                 </div>
@@ -168,46 +175,56 @@ export const UrlScanner: React.FC = () => {
           })()}
 
           {/* Engine Breakdown Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-            <div className="p-3.5 sm:p-4 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between">
-              <div>
-                <div className="text-[10px] text-slate-400 font-bold uppercase">Malicious / Phishing</div>
-                <div className="text-xl sm:text-2xl font-black text-rose-600">{result.maliciousCount}</div>
-              </div>
-              <XCircle className="w-7 h-7 sm:w-8 sm:h-8 text-rose-400/40" />
-            </div>
+          {(() => {
+            const flaggedCount = result.flaggedEngineCount ?? result.maliciousCount ?? 0;
+            const cleanCountVal = result.cleanCount ?? result.harmlessCount ?? 0;
+            const suspiciousVal = result.suspiciousCount ?? (result.detections?.filter(d => d.result === 'suspicious').length || 0);
 
-            <div className="p-3.5 sm:p-4 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between">
-              <div>
-                <div className="text-[10px] text-slate-400 font-bold uppercase">Suspicious / Risky</div>
-                <div className="text-xl sm:text-2xl font-black text-amber-600">{result.suspiciousCount}</div>
-              </div>
-              <AlertOctagon className="w-7 h-7 sm:w-8 sm:h-8 text-amber-400/40" />
-            </div>
+            return (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+                <div className="p-3.5 sm:p-4 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between">
+                  <div>
+                    <div className="text-[10px] text-slate-400 font-bold uppercase">Malicious / Phishing</div>
+                    <div className="text-xl sm:text-2xl font-black text-rose-600">{flaggedCount}</div>
+                  </div>
+                  <XCircle className="w-7 h-7 sm:w-8 sm:h-8 text-rose-400/40" />
+                </div>
 
-            <div className="p-3.5 sm:p-4 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between">
-              <div>
-                <div className="text-[10px] text-slate-400 font-bold uppercase">Harmless / Clean</div>
-                <div className="text-xl sm:text-2xl font-black text-emerald-600">{result.harmlessCount}</div>
+                <div className="p-3.5 sm:p-4 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between">
+                  <div>
+                    <div className="text-[10px] text-slate-400 font-bold uppercase">Suspicious / Risky</div>
+                    <div className="text-xl sm:text-2xl font-black text-amber-600">{suspiciousVal}</div>
+                  </div>
+                  <AlertOctagon className="w-7 h-7 sm:w-8 sm:h-8 text-amber-400/40" />
+                </div>
+
+                <div className="p-3.5 sm:p-4 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between">
+                  <div>
+                    <div className="text-[10px] text-slate-400 font-bold uppercase">Harmless / Clean</div>
+                    <div className="text-xl sm:text-2xl font-black text-emerald-600">{cleanCountVal}</div>
+                  </div>
+                  <CheckCircle2 className="w-7 h-7 sm:w-8 sm:h-8 text-emerald-400/40" />
+                </div>
               </div>
-              <CheckCircle2 className="w-7 h-7 sm:w-8 sm:h-8 text-emerald-400/40" />
-            </div>
-          </div>
+            );
+          })()}
 
           {/* Summary */}
           <div className="p-3.5 sm:p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1.5 sm:space-y-2">
-            <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Ringkasan Hasil Pemindaian</h4>
-            <p className="text-xs text-slate-700 leading-relaxed">{result.summary}</p>
+            <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Ringkasan & Saran Keamanan</h4>
+            <p className="text-xs text-slate-700 leading-relaxed">{result.safetyAdvice || result.summary}</p>
           </div>
 
-          {/* IP Resolution & Category */}
+          {/* IP Resolution & Country & Category */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
-            {result.ipAddress && (
+            {(result.ipAddress || result.hostCountry) && (
               <div className="p-3.5 sm:p-4 rounded-2xl bg-slate-50 border border-slate-200 flex items-center gap-3">
                 <Network className="w-5 h-5 text-slate-700 shrink-0" />
                 <div>
-                  <div className="text-[10px] text-slate-400 font-bold uppercase">Resolved IP Address:</div>
-                  <div className="text-xs font-mono text-slate-900 font-bold">{result.ipAddress}</div>
+                  <div className="text-[10px] text-slate-400 font-bold uppercase">IP Address & Server Country:</div>
+                  <div className="text-xs font-mono text-slate-900 font-bold">
+                    {result.ipAddress || 'Unknown IP'} {result.hostCountry ? `(${result.hostCountry})` : ''}
+                  </div>
                 </div>
               </div>
             )}
